@@ -11,7 +11,7 @@ require_git
 # --- Ensure git-crypt is installed ---
 if ! command -v git-crypt &>/dev/null; then
   echo "git-crypt not found. Installing..."
-  "$REPO_DIR/.mise/tasks/encrypt/install"
+  mise -C "$REPO_DIR" run -q encrypt:install
 fi
 
 # --- Already initialized? ---
