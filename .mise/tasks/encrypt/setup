@@ -81,6 +81,10 @@ else
   echo "  .gitattributes already has git-crypt patterns, skipping"
 fi
 
+# --- Update COLLABORATORS manifest ---
+update_collaborators
+echo "  Updated COLLABORATORS manifest"
+
 # --- Install pre-commit hook ---
 HOOK="$TARGET_DIR/.git/hooks/pre-commit"
 cat > "$HOOK" <<'HOOK_EOF'

@@ -65,3 +65,11 @@ notes/private/**"
   [ -x "$TARGET_DIR/.git/hooks/pre-commit" ]
   grep -q "git-crypt" "$TARGET_DIR/.git/hooks/pre-commit"
 }
+
+@test "setup without keys does not create COLLABORATORS" {
+  export CALLER_PWD="$TARGET_DIR"
+  "$REPO_DIR/.mise/tasks/encrypt/setup"
+
+  # .git-crypt/keys/default/0/ only exists after first add-gpg-user
+  [ ! -d "$TARGET_DIR/.git-crypt/keys/default/0" ]
+}

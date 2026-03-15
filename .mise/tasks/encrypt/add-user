@@ -19,4 +19,5 @@ fi
 uid=$(gpg --list-keys --with-colons "$fingerprint" | awk -F: '/^uid/{print $10; exit}')
 echo "Adding collaborator: ${uid:-$fingerprint}"
 git -C "$TARGET_DIR" crypt add-gpg-user --trusted "$fingerprint"
+update_collaborators
 echo "Done. They can now run 'notes encrypt:unlock' to decrypt."
