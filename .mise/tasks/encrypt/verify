@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+#MISE description="Verify that a public key produces a given fingerprint"
+#USAGE flag "--gpg-key <fingerprint>" help="Expected GPG fingerprint" required=#true
+#USAGE flag "--key-file <file>" help="Path to armored public key file (or - for stdin)"
+set -eo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+source "$REPO_DIR/lib/common.sh"
+
+fingerprint="$usage_gpg_key"
+
+# Read the public key — from file, stdin, or COLLABORATORS
+if [ -n "${usage_key_file:-}" ]; then
+  if [ "$usage_key_file" = "-" ]; then
+    key_data=$(cat)
+  elif [ -f "$usage_key_file" ]; then
+    key_data=$(cat "$usage_key_file")
+  else
+    echo "Error: key file not found: $usage_key_file" >&2
+    exit 1
+  fi
+else
+  # Try to extract from COLLABORATORS manifest
+  require_git
+  require_initialized
+  collaborators="$TARGET_DIR/.git-crypt/keys/default/0/COLLABORATORS"
+  if [ ! -f "$collaborators" ]; then
+    echo "Error: no COLLABORATORS file and no --key-file given" >&2
+    exit 1
+  fi
+
+  # Extract the PGP block following the matching fingerprint line
+  key_data=$(awk -v fp="$fingerprint" '
+    $0 ~ "Fingerprint: " fp { found=1; next }
+    found && /^-----BEGIN PGP PUBLIC KEY BLOCK-----/ { printing=1 }
+    printing { print }
+    printing && /^-----END PGP PUBLIC KEY BLOCK-----/ { exit }
+  ' "$collaborators")
+
+  if [ -z "$key_data" ]; then
+    echo "Error: fingerprint $fingerprint not found in COLLABORATORS" >&2
+    exit 1
+  fi
+fi
+
+# Import into a temporary keyring and extract the fingerprint
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+actual_fpr=$(echo "$key_data" \
+  | gpg --homedir "$tmpdir" --batch --quiet --import 2>/dev/null \
+  && gpg --homedir "$tmpdir" --batch --with-colons --fingerprint 2>/dev/null \
+  | awk -F: '/^fpr/{print $10; exit}')
+
+if [ -z "$actual_fpr" ]; then
+  echo "Error: could not extract fingerprint from provided key" >&2
+  exit 1
+fi
+
+# Get the UID from the temp keyring
+uid=$(gpg --homedir "$tmpdir" --batch --with-colons --list-keys 2>/dev/null \
+  | awk -F: '/^uid/{print $10; exit}')
+
+if [ "$actual_fpr" = "$fingerprint" ]; then
+  echo "Verified: ${uid:-unknown}"
+  echo "  Fingerprint: $actual_fpr"
+  echo "  Public key matches the claimed fingerprint."
+  exit 0
+else
+  echo "MISMATCH: ${uid:-unknown}" >&2
+  echo "  Expected:  $fingerprint" >&2
+  echo "  Got:       $actual_fpr" >&2
+  echo "  The public key does NOT match the claimed fingerprint." >&2
+  exit 1
+fi
