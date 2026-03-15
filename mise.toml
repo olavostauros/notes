@@ -1,0 +1,6 @@
+[tools]
+python = "3"
+bats = "1.13.0"
+# git-crypt has no macOS binary on GitHub releases.
+# macOS: brew install git-crypt
+# Linux: downloaded from GitHub releases by encrypt:install

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Generate README.md and graph.md from note frontmatter and wikilinks"
+#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
+set -eo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TARGET_DIR="${CALLER_PWD:-.}"
+
+notes_dir="$TARGET_DIR/${usage_dir:-notes}"
+
+if [ ! -d "$notes_dir" ]; then
+  echo "Error: notes directory not found: $notes_dir" >&2
+  exit 1
+fi
+
+exec python3 "$REPO_DIR/lib/notes_index.py" "$notes_dir"

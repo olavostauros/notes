@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+#MISE description="Install git-crypt (brew on macOS, binary download on Linux)"
+set -eo pipefail
+
+INSTALL_DIR="${GIT_CRYPT_INSTALL_DIR:-$HOME/.local/bin}"
+VERSION="0.8.0"
+
+if command -v git-crypt &>/dev/null; then
+  echo "git-crypt already installed: $(which git-crypt)"
+  git-crypt --version
+  exit 0
+fi
+
+# macOS: brew (no prebuilt macOS binary available)
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  if command -v brew &>/dev/null; then
+    echo "Installing git-crypt via brew..."
+    if brew install git-crypt; then
+      exit 0
+    else
+      echo "" >&2
+      echo "Error: brew install failed." >&2
+      echo "If on a VPN that blocks brew, disconnect and retry." >&2
+      exit 1
+    fi
+  else
+    echo "Error: brew not found. Install Homebrew first: https://brew.sh" >&2
+    exit 1
+  fi
+fi
+
+# Linux: download prebuilt x86_64 binary
+if [[ "$(uname -s)" == "Linux" ]]; then
+  BINARY_URL="https://github.com/AGWA/git-crypt/releases/download/${VERSION}/git-crypt-${VERSION}-linux-x86_64"
+  echo "Downloading git-crypt ${VERSION} (Linux x86_64)..."
+  mkdir -p "$INSTALL_DIR"
+  curl -fL -o "$INSTALL_DIR/git-crypt" "$BINARY_URL"
+  chmod +x "$INSTALL_DIR/git-crypt"
+  echo "Installed: $INSTALL_DIR/git-crypt"
+  "$INSTALL_DIR/git-crypt" --version
+  exit 0
+fi
+
+echo "Error: unsupported OS: $(uname -s)" >&2
+exit 1

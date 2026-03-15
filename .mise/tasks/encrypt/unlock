@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Unlock encrypted files using your GPG key"
+set -eo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+source "$REPO_DIR/lib/common.sh"
+require_git
+require_initialized
+
+echo "Unlocking with your GPG key..."
+git -C "$TARGET_DIR" crypt unlock
+echo "Unlocked. Encrypted files are now readable."
