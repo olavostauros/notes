@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Initialize encryption in the current repo"
-#USAGE flag "--gpg-key <fingerprint>" var=true help="GPG key fingerprint(s) to add as collaborators"
-#USAGE flag "--pattern <pattern>" var=true help="Gitattributes patterns to encrypt (default: notes/**)"
+#USAGE flag "--gpg-key <fingerprint>" var=#true help="GPG key fingerprint(s) to add as collaborators"
+#USAGE flag "--pattern <pattern>" var=#true help="Gitattributes patterns to encrypt (default: notes/**)"
 set -eo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

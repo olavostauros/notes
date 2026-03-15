@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Add a GPG collaborator who can decrypt this repo"
-#USAGE flag "--gpg-key <fingerprint>" help="GPG key fingerprint" required=true
+#USAGE flag "--gpg-key <fingerprint>" help="GPG key fingerprint" required=#true
 set -eo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
