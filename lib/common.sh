@@ -15,7 +15,7 @@ require_git() {
 }
 
 is_initialized() {
-  [ -d "$TARGET_DIR/.git/git-crypt" ]
+  [ -d "$TARGET_DIR/.git-crypt" ]
 }
 
 require_initialized() {

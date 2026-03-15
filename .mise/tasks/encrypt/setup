@@ -15,7 +15,8 @@ if ! command -v git-crypt &>/dev/null; then
 fi
 
 # --- Already initialized? ---
-if is_initialized; then
+# Check both .git-crypt/ (committed keys) and .git/git-crypt (local init state)
+if is_initialized || [ -d "$TARGET_DIR/.git/git-crypt" ]; then
   echo "git-crypt already initialized in this repo."
   echo "To add a collaborator: notes encrypt:add-user --gpg-key <fingerprint>"
   echo "To check status:       notes encrypt:status"

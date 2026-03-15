@@ -7,10 +7,10 @@ load test_helper
   [ "$status" -ne 0 ]
 }
 
-@test "is_initialized returns true after git crypt init" {
+@test "is_initialized returns false after bare git crypt init (no users yet)" {
   git -C "$TARGET_DIR" crypt init
   run is_initialized
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]
 }
 
 @test "require_git fails on non-git directory" {
