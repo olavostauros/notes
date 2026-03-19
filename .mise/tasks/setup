@@ -4,25 +4,22 @@
 #USAGE flag "--pattern <pattern>" var=#true help="Gitattributes patterns to encrypt (default: notes/**)"
 set -eo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-source "$REPO_DIR/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/common.sh"
 require_git
+require_rudi
 
-# --- Ensure git-crypt is installed ---
-if ! command -v git-crypt &>/dev/null; then
-  echo "git-crypt not found. Installing..."
-  mise -C "$REPO_DIR" run -q encrypt:install
-fi
+# Ensure rudi operates on the target repo (shiv shims set CALLER_PWD=$PWD)
+cd "$TARGET_DIR"
 
-# --- Initialize (skip if already done) ---
+# --- Initialize via rudi ---
 if is_initialized || [ -d "$TARGET_DIR/.git/git-crypt" ]; then
   echo "git-crypt already initialized — updating auxiliary files..."
 else
   echo "Initializing git-crypt..."
-  git -C "$TARGET_DIR" crypt init
+  rudi init
 fi
 
-# --- Add GPG keys ---
+# --- Add GPG keys via rudi ---
 if [ -n "${usage_gpg_key:-}" ]; then
   echo ""
   echo "Adding GPG collaborators..."
@@ -35,7 +32,7 @@ if [ -n "${usage_gpg_key:-}" ]; then
       uid=$(gpg --list-keys --with-colons "$key" 2>/dev/null \
         | awk -F: '/^uid/{print $10; exit}')
       echo "  + ${uid:-$key}"
-      git -C "$TARGET_DIR" crypt add-gpg-user --trusted "$key"
+      rudi add-user "$key"
     else
       echo "  - $key — not in local keyring, skipping" >&2
       skipped=$((skipped + 1))
@@ -45,41 +42,32 @@ if [ -n "${usage_gpg_key:-}" ]; then
   if [ "$skipped" -gt 0 ]; then
     echo ""
     echo "  $skipped key(s) skipped. Import them first: gpg --import <pubkey.asc>"
-    echo "  Then run: notes encrypt:add-user --gpg-key <fingerprint>"
+    echo "  Then run: notes add-user --gpg-key <fingerprint>"
   fi
 fi
 
-# --- Configure .gitattributes ---
+# --- Configure .gitattributes via rudi ---
 GITATTRIBUTES="$TARGET_DIR/.gitattributes"
 if ! grep -q "git-crypt" "$GITATTRIBUTES" 2>/dev/null; then
   echo ""
   echo "Configuring encrypted patterns..."
 
-  # Use provided patterns or default to notes/**
   if [ -n "${usage_pattern:-}" ]; then
     IFS=$'\n' read -r -d '' -a patterns <<< "$usage_pattern" || true
   else
     patterns=("notes/**")
   fi
 
-  {
-    echo ""
-    echo "# Encrypted paths — transparently encrypted by git-crypt on push/pull."
-    for p in "${patterns[@]}"; do
-      [ -z "$p" ] && continue
-      printf '%-30s filter=git-crypt diff=git-crypt\n' "$p"
-    done
-  } >> "$GITATTRIBUTES"
+  for p in "${patterns[@]}"; do
+    [ -z "$p" ] && continue
+    rudi assign "$p"
+  done
 
   echo "  Updated .gitattributes"
 else
   echo ""
   echo "  .gitattributes already has git-crypt patterns, skipping"
 fi
-
-# --- Update COLLABORATORS manifest ---
-update_collaborators
-echo "  Updated COLLABORATORS manifest"
 
 # --- Install pre-commit hook ---
 HOOK="$TARGET_DIR/.git/hooks/pre-commit"
@@ -109,7 +97,7 @@ if [ "${#bad_files[@]}" -gt 0 ]; then
   echo "ERROR: Staged files should be encrypted but are plaintext:" >&2
   printf '  %s\n' "${bad_files[@]}" >&2
   echo "" >&2
-  echo "Run 'notes encrypt:unlock' if git-crypt is locked, then re-stage." >&2
+  echo "Run 'notes unlock' if git-crypt is locked, then re-stage." >&2
   exit 1
 fi
 HOOK_EOF
@@ -118,6 +106,6 @@ echo "  Installed pre-commit hook"
 
 echo ""
 echo "Done! Next steps:"
-echo "  1. Check status:     notes encrypt:status"
+echo "  1. Check status:     notes status"
 echo "  2. Commit the setup: git add .gitattributes .git-crypt && git commit"
 echo "  3. Place files in encrypted paths — they encrypt on push"

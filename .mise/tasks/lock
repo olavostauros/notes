@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="Lock encrypted files (re-encrypt on disk)"
+#USAGE flag "--all" help="Lock all keys, not just default"
+set -eo pipefail
+
+source "$MISE_CONFIG_ROOT/lib/common.sh"
+require_git
+require_initialized
+
+if ! command -v git-crypt &>/dev/null; then
+  echo "Error: git-crypt not found. Install it: rudi install" >&2
+  exit 1
+fi
+
+if [ "${usage_all:-}" = "true" ]; then
+  git -C "$TARGET_DIR" crypt lock --all
+  echo "Locked all keys."
+else
+  git -C "$TARGET_DIR" crypt lock
+  echo "Locked default key. Use --all to lock all keys."
+fi
