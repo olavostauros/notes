@@ -66,7 +66,7 @@ notes/private/**"
   grep -q "git-crypt" "$TARGET_DIR/.git/hooks/pre-commit"
 }
 
-@test "setup without keys does not create COLLABORATORS" {
+@test "setup without keys does not add gpg users" {
   export CALLER_PWD="$TARGET_DIR"
   "$REPO_DIR/.mise/tasks/setup"
 
