@@ -30,7 +30,7 @@ load test_helper
 
 @test "setup writes .gitattributes with default pattern" {
   export CALLER_PWD="$TARGET_DIR"
-  run "$REPO_DIR/.mise/tasks/encrypt/setup"
+  run "$REPO_DIR/.mise/tasks/setup"
   [ "$status" -eq 0 ]
 
   [ -f "$TARGET_DIR/.gitattributes" ]
@@ -40,9 +40,9 @@ load test_helper
 
 @test "setup is idempotent" {
   export CALLER_PWD="$TARGET_DIR"
-  "$REPO_DIR/.mise/tasks/encrypt/setup"
+  "$REPO_DIR/.mise/tasks/setup"
 
-  run "$REPO_DIR/.mise/tasks/encrypt/setup"
+  run "$REPO_DIR/.mise/tasks/setup"
   [ "$status" -eq 0 ]
   [[ "$output" == *"git-crypt already initialized — updating auxiliary files..."* ]]
 }
@@ -51,7 +51,7 @@ load test_helper
   export CALLER_PWD="$TARGET_DIR"
   export usage_pattern="agents/*/Zettels/**
 notes/private/**"
-  run "$REPO_DIR/.mise/tasks/encrypt/setup"
+  run "$REPO_DIR/.mise/tasks/setup"
   [ "$status" -eq 0 ]
 
   grep -q "agents/\*/Zettels/\*\*" "$TARGET_DIR/.gitattributes"
@@ -60,7 +60,7 @@ notes/private/**"
 
 @test "setup installs pre-commit hook" {
   export CALLER_PWD="$TARGET_DIR"
-  "$REPO_DIR/.mise/tasks/encrypt/setup"
+  "$REPO_DIR/.mise/tasks/setup"
 
   [ -x "$TARGET_DIR/.git/hooks/pre-commit" ]
   grep -q "git-crypt" "$TARGET_DIR/.git/hooks/pre-commit"
@@ -68,7 +68,7 @@ notes/private/**"
 
 @test "setup without keys does not create COLLABORATORS" {
   export CALLER_PWD="$TARGET_DIR"
-  "$REPO_DIR/.mise/tasks/encrypt/setup"
+  "$REPO_DIR/.mise/tasks/setup"
 
   # .git-crypt/keys/default/0/ only exists after first add-gpg-user
   [ ! -d "$TARGET_DIR/.git-crypt/keys/default/0" ]
@@ -101,7 +101,7 @@ generate_test_key() {
 
   export usage_gpg_key="$fpr"
   export usage_key_file="$keyfile"
-  run "$REPO_DIR/.mise/tasks/encrypt/verify"
+  run "$REPO_DIR/.mise/tasks/verify"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Verified"* ]]
   [[ "$output" == *"matches the claimed fingerprint"* ]]
@@ -121,7 +121,7 @@ generate_test_key() {
   # Use a bogus fingerprint
   export usage_gpg_key="0000000000000000000000000000000000000000"
   export usage_key_file="$keyfile"
-  run "$REPO_DIR/.mise/tasks/encrypt/verify"
+  run "$REPO_DIR/.mise/tasks/verify"
   [ "$status" -ne 0 ]
   [[ "$output" == *"MISMATCH"* ]]
 }
@@ -136,7 +136,7 @@ generate_test_key() {
 
   export usage_gpg_key="$fpr"
   export usage_key_file="-"
-  run bash -c "gpg --homedir '$keyhome' --batch --armor --export '$fpr' | '$REPO_DIR/.mise/tasks/encrypt/verify'"
+  run bash -c "gpg --homedir '$keyhome' --batch --armor --export '$fpr' | '$REPO_DIR/.mise/tasks/verify'"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Verified"* ]]
 }
