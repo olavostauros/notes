@@ -19,7 +19,9 @@ require_rudi() {
 }
 
 is_initialized() {
-  [ -d "$TARGET_DIR/.git-crypt" ]
+  # .git-crypt/ exists after add-gpg-user (committed keys)
+  # .git/git-crypt/ exists after git crypt init (local state)
+  [ -d "$TARGET_DIR/.git-crypt" ] || [ -d "$TARGET_DIR/.git/git-crypt" ]
 }
 
 require_initialized() {
