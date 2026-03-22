@@ -6,6 +6,11 @@ set -eo pipefail
 TARGET_DIR="${CALLER_PWD:-.}"
 notes_dir="$TARGET_DIR/${usage_dir:-notes}"
 
+if ! command -v farts &>/dev/null; then
+  echo "Error: farts not found. Install it: shiv install farts" >&2
+  exit 1
+fi
+
 if [ ! -d "$notes_dir" ]; then
   echo "Error: notes directory not found: $notes_dir" >&2
   exit 1
