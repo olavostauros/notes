@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+#MISE description="List notes with metadata"
+#USAGE flag "--json" help="Output as JSON array"
+#USAGE flag "--recent <n>" help="Show N most recently updated notes"
+#USAGE flag "--tag <tag>" help="Filter by tag"
+#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
+set -eo pipefail
+
+TARGET_DIR="${CALLER_PWD:-.}"
+notes_dir="$TARGET_DIR/${usage_dir:-notes}"
+
+if [ ! -d "$notes_dir" ]; then
+  echo "Error: notes directory not found: $notes_dir" >&2
+  exit 1
+fi
+
+# Collect candidate files
+skip_files="README.md graph.md"
+files=()
+for f in "$notes_dir"/*.md; do
+  [ ! -f "$f" ] && continue
+  base=$(basename "$f")
+  skip=false
+  for s in $skip_files; do
+    [ "$base" = "$s" ] && skip=true && break
+  done
+  $skip && continue
+  files+=("$f")
+done
+
+if [ ${#files[@]} -eq 0 ]; then
+  if [ "${usage_json:-}" = "true" ]; then
+    echo "[]"
+  else
+    echo "No notes found."
+  fi
+  exit 0
+fi
+
+# Filter by tag using farts query
+if [ -n "${usage_tag:-}" ]; then
+  filtered=()
+  while IFS= read -r match; do
+    [ -n "$match" ] && filtered+=("$match")
+  done < <(farts query "tags contains $usage_tag" "${files[@]}" 2>/dev/null || true)
+  files=("${filtered[@]}")
+
+  if [ ${#files[@]} -eq 0 ]; then
+    if [ "${usage_json:-}" = "true" ]; then
+      echo "[]"
+    else
+      echo "No notes found with tag: $usage_tag"
+    fi
+    exit 0
+  fi
+fi
+
+# Extract metadata from each file
+rows=()
+for f in "${files[@]}"; do
+  title=$(farts get title "$f" 2>/dev/null || true)
+  [ -z "$title" ] && continue
+  updated=$(farts get updated "$f" 2>/dev/null || true)
+  created=$(farts get created "$f" 2>/dev/null || true)
+  tags=$(farts get tags "$f" 2>/dev/null | paste -sd ',' - || true)
+  date="${updated:-$created}"
+  slug=$(basename "$f" .md)
+  rows+=("$(printf '%s\t%s\t%s\t%s\t%s' "$title" "$tags" "$date" "$slug" "$f")")
+done
+
+# Sort by date descending
+sorted=$(printf '%s\n' "${rows[@]}" | sort -t$'\t' -k3 -r)
+
+# Apply --recent limit
+if [ -n "${usage_recent:-}" ]; then
+  sorted=$(echo "$sorted" | head -n "$usage_recent")
+fi
+
+# Output
+if [ "${usage_json:-}" = "true" ]; then
+  echo "$sorted" | awk -F'\t' 'BEGIN { print "[" }
+    NR > 1 { printf "," }
+    {
+      # Escape quotes in fields
+      gsub(/"/, "\\\"", $1)
+      gsub(/"/, "\\\"", $2)
+      # Split tags into array
+      n = split($2, tags, ",")
+      tag_json = "["
+      for (i = 1; i <= n; i++) {
+        if (i > 1) tag_json = tag_json ","
+        gsub(/^ +| +$/, "", tags[i])
+        tag_json = tag_json "\"" tags[i] "\""
+      }
+      tag_json = tag_json "]"
+      printf "\n  {\"title\": \"%s\", \"tags\": %s, \"date\": \"%s\", \"slug\": \"%s\", \"path\": \"%s\"}", $1, tag_json, $3, $4, $5
+    }
+    END { print "\n]" }'
+else
+  {
+    printf 'Title\tTags\tUpdated\n'
+    echo "$sorted" | awk -F'\t' '{ printf "%s\t%s\t%s\n", $1, $2, $3 }'
+  } | gum table --print --separator "	"
+fi

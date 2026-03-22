@@ -3,152 +3,90 @@
 load test_helper
 
 setup() {
-  export REPO_DIR="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
-  export NOTES_DIR="$BATS_TEST_TMPDIR/notes"
+  export CALLER_PWD="$BATS_TEST_TMPDIR"
+  export NOTES_DIR="$CALLER_PWD/notes"
   mkdir -p "$NOTES_DIR"
 }
 
-@test "generates README.md from note with frontmatter" {
-  cat > "$NOTES_DIR/test-note.md" <<'EOF'
+create_note() {
+  local slug="$1" title="$2" tags="$3" updated="$4"
+  cat > "$NOTES_DIR/$slug.md" <<EOF
 ---
-title: Test Note
-tags: [testing, example]
+title: $title
+tags: [$tags]
 related: []
 created: 2026-03-14
-updated: 2026-03-14
+updated: ${updated:-2026-03-14}
 ---
 
-# Test Note
-
-This is a test note.
+# $title
 EOF
-
-  run python3 "$REPO_DIR/lib/notes_index.py" "$NOTES_DIR"
-  [ "$status" -eq 0 ]
-
-  [ -f "$NOTES_DIR/README.md" ]
-  grep -q "Test Note" "$NOTES_DIR/README.md"
-  grep -q "testing" "$NOTES_DIR/README.md"
-  grep -q "example" "$NOTES_DIR/README.md"
 }
 
-@test "notes without frontmatter listed in unconverted section" {
-  cat > "$NOTES_DIR/no-frontmatter.md" <<'EOF'
-# Just a plain note
+@test "index generates index.md from note with frontmatter" {
+  create_note "test-note" "Test Note" "testing, example" "2026-03-14"
 
-No YAML frontmatter here.
-EOF
-
-  run python3 "$REPO_DIR/lib/notes_index.py" "$NOTES_DIR"
+  run notes index
   [ "$status" -eq 0 ]
 
-  grep -q "no-frontmatter.md" "$NOTES_DIR/README.md"
-  grep -q "Without Frontmatter" "$NOTES_DIR/README.md"
+  [ -f "$NOTES_DIR/index.md" ]
+  grep -q "Test Note" "$NOTES_DIR/index.md"
+  grep -q "testing" "$NOTES_DIR/index.md"
+  grep -q "example" "$NOTES_DIR/index.md"
 }
 
-@test "wikilinks generate backlinks in graph.md" {
-  cat > "$NOTES_DIR/note-a.md" <<'EOF'
----
-title: Note A
-tags: [test]
-related: []
-created: 2026-03-14
-updated: 2026-03-14
----
+@test "index lists notes without frontmatter in unconverted section" {
+  echo "# Just a plain note" > "$NOTES_DIR/no-frontmatter.md"
 
-# Note A
-
-This links to [[note-b]].
-EOF
-
-  cat > "$NOTES_DIR/note-b.md" <<'EOF'
----
-title: Note B
-tags: [test]
-related: []
-created: 2026-03-14
-updated: 2026-03-14
----
-
-# Note B
-
-Standalone note.
-EOF
-
-  run python3 "$REPO_DIR/lib/notes_index.py" "$NOTES_DIR"
+  run notes index
   [ "$status" -eq 0 ]
 
-  [ -f "$NOTES_DIR/graph.md" ]
-  # note-a should have outgoing link to note-b
-  grep -q "note-a.*note-b" "$NOTES_DIR/graph.md"
-  # note-b should have backlink from note-a
-  grep -q "note-b.*note-a" "$NOTES_DIR/graph.md"
+  grep -q "no-frontmatter.md" "$NOTES_DIR/index.md"
+  grep -q "Without Frontmatter" "$NOTES_DIR/index.md"
 }
 
-@test "empty directory generates valid index" {
-  run python3 "$REPO_DIR/lib/notes_index.py" "$NOTES_DIR"
+@test "index empty directory generates valid output" {
+  run notes index
   [ "$status" -eq 0 ]
 
-  [ -f "$NOTES_DIR/README.md" ]
-  [ -f "$NOTES_DIR/graph.md" ]
-  grep -q "No tags yet" "$NOTES_DIR/README.md"
+  [ -f "$NOTES_DIR/index.md" ]
+  grep -q "No tags yet" "$NOTES_DIR/index.md"
 }
 
-@test "skips README.md and graph.md when scanning" {
-  cat > "$NOTES_DIR/README.md" <<'EOF'
-# Old README
-EOF
-  cat > "$NOTES_DIR/graph.md" <<'EOF'
-# Old Graph
-EOF
-  cat > "$NOTES_DIR/real-note.md" <<'EOF'
----
-title: Real Note
-tags: [test]
-related: []
-created: 2026-03-14
-updated: 2026-03-14
----
+@test "index does not include index.md or graph.md as notes" {
+  echo "# Old Index" > "$NOTES_DIR/index.md"
+  echo "# Old Graph" > "$NOTES_DIR/graph.md"
+  create_note "real-note" "Real Note" "test" "2026-03-14"
 
-# Real Note
-EOF
-
-  run python3 "$REPO_DIR/lib/notes_index.py" "$NOTES_DIR"
+  run notes index
   [ "$status" -eq 0 ]
 
-  # README should be regenerated with Real Note, not contain old content
-  grep -q "Real Note" "$NOTES_DIR/README.md"
-  ! grep -q "Old README" "$NOTES_DIR/README.md"
+  # index.md should be regenerated with Real Note
+  grep -q "Real Note" "$NOTES_DIR/index.md"
+  ! grep -q "Old Index" "$NOTES_DIR/index.md"
 }
 
-@test "explicit relations appear in graph" {
-  cat > "$NOTES_DIR/note-x.md" <<'EOF'
----
-title: Note X
-tags: [test]
-related: [note-y]
-created: 2026-03-14
-updated: 2026-03-14
----
+@test "index builds tag cloud with counts" {
+  create_note "a" "Note A" "guide" "2026-03-14"
+  create_note "b" "Note B" "guide, reference" "2026-03-14"
+  create_note "c" "Note C" "reference" "2026-03-14"
 
-# Note X
-EOF
-
-  cat > "$NOTES_DIR/note-y.md" <<'EOF'
----
-title: Note Y
-tags: [test]
-related: []
-created: 2026-03-14
-updated: 2026-03-14
----
-
-# Note Y
-EOF
-
-  run python3 "$REPO_DIR/lib/notes_index.py" "$NOTES_DIR"
+  run notes index
   [ "$status" -eq 0 ]
 
-  grep -q "Explicit Relations" "$NOTES_DIR/graph.md"
-  grep -q "note-x.*note-y" "$NOTES_DIR/graph.md"
+  # guide should have count 2, reference should have count 2
+  grep -q '`guide` (2)' "$NOTES_DIR/index.md"
+  grep -q '`reference` (2)' "$NOTES_DIR/index.md"
+}
+
+@test "index generates all-notes table" {
+  create_note "alpha" "Alpha" "test" "2026-03-10"
+  create_note "beta" "Beta" "test" "2026-03-15"
+
+  run notes index
+  [ "$status" -eq 0 ]
+
+  grep -q "| Note | Tags | Updated |" "$NOTES_DIR/index.md"
+  grep -q "Alpha" "$NOTES_DIR/index.md"
+  grep -q "Beta" "$NOTES_DIR/index.md"
 }

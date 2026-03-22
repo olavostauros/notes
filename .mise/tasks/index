@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-#MISE description="Generate README.md and graph.md from note frontmatter and wikilinks"
+#MISE description="Generate index.md from note frontmatter"
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
 set -eo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TARGET_DIR="${CALLER_PWD:-.}"
-
 notes_dir="$TARGET_DIR/${usage_dir:-notes}"
 
 if [ ! -d "$notes_dir" ]; then
@@ -13,4 +11,125 @@ if [ ! -d "$notes_dir" ]; then
   exit 1
 fi
 
-exec python3 "$REPO_DIR/lib/notes_index.py" "$notes_dir"
+# Collect note metadata using farts
+declare -A titles created updated
+declare -a slugs unconverted all_tags
+
+for f in "$notes_dir"/*.md; do
+  [ ! -f "$f" ] && continue
+  base=$(basename "$f")
+  slug="${base%.md}"
+
+  title=$(farts get title "$f" 2>/dev/null || true)
+  if [ -z "$title" ]; then
+    # Track files without frontmatter (skip generated files)
+    [[ "$base" != "index.md" && "$base" != "graph.md" ]] && unconverted+=("$base")
+    continue
+  fi
+
+  slugs+=("$slug")
+  titles[$slug]="$title"
+  created[$slug]=$(farts get created "$f" 2>/dev/null || true)
+  updated[$slug]=$(farts get updated "$f" 2>/dev/null || true)
+
+  # Collect tags for this note
+  while IFS= read -r tag; do
+    [ -z "$tag" ] && continue
+    all_tags+=("$tag:$slug")
+  done < <(farts get tags "$f" 2>/dev/null || true)
+done
+
+# Sort slugs alphabetically
+IFS=$'\n' sorted_slugs=($(printf '%s\n' "${slugs[@]}" | sort)); unset IFS
+
+# Build tag index: tag -> sorted list of slugs
+declare -A tag_slugs
+declare -a unique_tags
+for entry in "${all_tags[@]}"; do
+  tag="${entry%%:*}"
+  slug="${entry#*:}"
+  if [ -z "${tag_slugs[$tag]+x}" ]; then
+    tag_slugs[$tag]="$slug"
+    unique_tags+=("$tag")
+  else
+    tag_slugs[$tag]="${tag_slugs[$tag]} $slug"
+  fi
+done
+IFS=$'\n' sorted_unique_tags=($(printf '%s\n' "${unique_tags[@]}" | sort)); unset IFS
+
+# --- Generate index.md ---
+{
+  echo "# Shared Notes"
+  echo ""
+  echo "Auto-generated index. Do not edit manually — run \`notes index\` to rebuild."
+  echo ""
+
+  # Tag cloud
+  echo "## Tags"
+  echo ""
+  if [ ${#sorted_unique_tags[@]} -eq 0 ]; then
+    echo "*No tags yet.*"
+  else
+    cloud=""
+    for tag in "${sorted_unique_tags[@]}"; do
+      count=$(echo "${tag_slugs[$tag]}" | tr ' ' '\n' | wc -l | tr -d ' ')
+      cloud+="\`$tag\` ($count) "
+    done
+    echo "$cloud"
+  fi
+  echo ""
+
+  # By-tag index
+  echo "## Notes by Tag"
+  echo ""
+  for tag in "${sorted_unique_tags[@]}"; do
+    echo "### $tag"
+    echo ""
+    IFS=$'\n' tag_slug_list=($(echo "${tag_slugs[$tag]}" | tr ' ' '\n' | sort)); unset IFS
+    for slug in "${tag_slug_list[@]}"; do
+      dates=""
+      [ -n "${created[$slug]}" ] && dates="created ${created[$slug]}"
+      if [ -n "${updated[$slug]}" ]; then
+        [ -n "$dates" ] && dates+=", "
+        dates+="updated ${updated[$slug]}"
+      fi
+      [ -n "$dates" ] && dates=" ($dates)"
+      echo "- [${titles[$slug]}]($slug.md)$dates"
+    done
+    echo ""
+  done
+
+  # All notes table
+  echo "## All Notes"
+  echo ""
+  echo "| Note | Tags | Updated |"
+  echo "|------|------|---------|"
+  for slug in "${sorted_slugs[@]}"; do
+    # Collect tags for this slug
+    slug_tags=""
+    for tag in "${sorted_unique_tags[@]}"; do
+      if echo " ${tag_slugs[$tag]} " | grep -q " $slug "; then
+        [ -n "$slug_tags" ] && slug_tags+=", "
+        slug_tags+="$tag"
+      fi
+    done
+    up="${updated[$slug]:-—}"
+    echo "| [${titles[$slug]}]($slug.md) | $slug_tags | $up |"
+  done
+  echo ""
+
+  # Unconverted notes
+  echo "## Notes Without Frontmatter"
+  echo ""
+  if [ ${#unconverted[@]} -eq 0 ]; then
+    echo "*All notes have frontmatter.*"
+  else
+    IFS=$'\n' sorted_unconv=($(printf '%s\n' "${unconverted[@]}" | sort)); unset IFS
+    for fname in "${sorted_unconv[@]}"; do
+      echo "- [$fname]($fname)"
+    done
+  fi
+  echo ""
+} > "$notes_dir/index.md"
+
+echo "  index.md generated (${#sorted_slugs[@]} indexed notes, ${#sorted_unique_tags[@]} tags)"
