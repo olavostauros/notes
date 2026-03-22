@@ -5,12 +5,7 @@ set -eo pipefail
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 require_git
 require_initialized
+require_rudi
 
-if ! command -v git-crypt &>/dev/null; then
-  echo "Error: git-crypt not found. Install it: rudi install" >&2
-  exit 1
-fi
-
-echo "Unlocking with your GPG key..."
-git -C "$TARGET_DIR" crypt unlock
-echo "Unlocked. Encrypted files are now readable."
+cd "$TARGET_DIR"
+rudi unlock
