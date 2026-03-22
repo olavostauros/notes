@@ -16,8 +16,7 @@ setup() {
   git -C "$TARGET_DIR" config commit.gpgsign false
 
   export CALLER_PWD="$TARGET_DIR"
-  export MISE_CONFIG_ROOT="$REPO_DIR"
-  source "$REPO_DIR/lib/common.sh"
+  source "$MISE_CONFIG_ROOT/lib/common.sh"
 
   # Isolated GPG home
   export GNUPGHOME="$TEST_DIR/gpg"
@@ -41,15 +40,13 @@ generate_test_key() {
 # --- add-user ---
 
 @test "add-user adds collaborator via rudi" {
-  # Setup first
-  "$REPO_DIR/.mise/tasks/setup"
+  notes setup
 
   local fpr
   fpr=$(generate_test_key "$GNUPGHOME")
   [ -n "$fpr" ]
 
-  export usage_gpg_key="$fpr"
-  run "$REPO_DIR/.mise/tasks/add-user"
+  run notes add-user -- --gpg-key "$fpr"
   [ "$status" -eq 0 ]
 
   # Key file should exist in .git-crypt
@@ -59,13 +56,11 @@ generate_test_key() {
 # --- lock / unlock round-trip ---
 
 @test "lock and unlock round-trip preserves file content" {
-  # Setup and add user
-  "$REPO_DIR/.mise/tasks/setup"
+  notes setup
 
   local fpr
   fpr=$(generate_test_key "$GNUPGHOME")
-  export usage_gpg_key="$fpr"
-  "$REPO_DIR/.mise/tasks/add-user"
+  notes add-user -- --gpg-key "$fpr"
 
   # Commit a file in the encrypted path
   mkdir -p "$TARGET_DIR/notes"
@@ -74,14 +69,14 @@ generate_test_key() {
   git -C "$TARGET_DIR" commit -q -m "Add encrypted note"
 
   # Lock
-  run "$REPO_DIR/.mise/tasks/lock"
+  run notes lock
   [ "$status" -eq 0 ]
 
   # File should not be readable as plaintext
   ! grep -q "secret content" "$TARGET_DIR/notes/secret.md" 2>/dev/null
 
   # Unlock
-  run "$REPO_DIR/.mise/tasks/unlock"
+  run notes unlock
   [ "$status" -eq 0 ]
 
   # File should be readable again
@@ -91,16 +86,14 @@ generate_test_key() {
 # --- status ---
 
 @test "status shows encryption info" {
-  "$REPO_DIR/.mise/tasks/setup"
+  notes setup
 
   local fpr
   fpr=$(generate_test_key "$GNUPGHOME")
-  export usage_gpg_key="$fpr"
-  "$REPO_DIR/.mise/tasks/add-user"
+  notes add-user -- --gpg-key "$fpr"
 
-  run "$REPO_DIR/.mise/tasks/status"
+  run notes status
   [ "$status" -eq 0 ]
-  # rudi status should show something meaningful
   [ -n "$output" ]
 }
 
@@ -108,15 +101,14 @@ generate_test_key() {
 
 @test "full workflow: setup → add-user → commit → lock → unlock → verify" {
   # 1. Setup with default pattern
-  run "$REPO_DIR/.mise/tasks/setup"
+  run notes setup
   [ "$status" -eq 0 ]
   [ -f "$TARGET_DIR/.gitattributes" ]
 
   # 2. Add a collaborator
   local fpr
   fpr=$(generate_test_key "$GNUPGHOME")
-  export usage_gpg_key="$fpr"
-  "$REPO_DIR/.mise/tasks/add-user"
+  notes add-user -- --gpg-key "$fpr"
   [ -f "$TARGET_DIR/.git-crypt/keys/default/0/$fpr.gpg" ]
 
   # 3. Commit encrypted files
@@ -128,22 +120,21 @@ generate_test_key() {
   git -C "$TARGET_DIR" commit -q -m "Add files"
 
   # 4. Lock
-  "$REPO_DIR/.mise/tasks/lock"
+  notes lock
   ! grep -q "top secret" "$TARGET_DIR/notes/classified.md" 2>/dev/null
   ! grep -q "also secret" "$TARGET_DIR/notes/private.md" 2>/dev/null
   # Public file should be unaffected
   grep -q "not encrypted" "$TARGET_DIR/public.md"
 
   # 5. Unlock
-  "$REPO_DIR/.mise/tasks/unlock"
+  notes unlock
   grep -q "top secret" "$TARGET_DIR/notes/classified.md"
   grep -q "also secret" "$TARGET_DIR/notes/private.md"
 
   # 6. Verify the key
   local keyfile="$TEST_DIR/test.pub.asc"
   gpg --homedir "$GNUPGHOME" --batch --armor --export "$fpr" > "$keyfile"
-  export usage_key_file="$keyfile"
-  run "$REPO_DIR/.mise/tasks/verify"
+  run notes verify -- --gpg-key "$fpr" --key-file "$keyfile"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Verified"* ]]
 }

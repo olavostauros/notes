@@ -16,7 +16,7 @@ load test_helper
 @test "require_git fails on non-git directory" {
   export CALLER_PWD="$BATS_TEST_TMPDIR/not-a-repo"
   mkdir -p "$CALLER_PWD"
-  source "$REPO_DIR/lib/common.sh"
+  source "$MISE_CONFIG_ROOT/lib/common.sh"
   run require_git
   [ "$status" -ne 0 ]
   [[ "$output" == *"not a git repository"* ]]
@@ -29,8 +29,7 @@ load test_helper
 }
 
 @test "setup writes .gitattributes with default pattern" {
-  export CALLER_PWD="$TARGET_DIR"
-  run "$REPO_DIR/.mise/tasks/setup"
+  run notes setup
   [ "$status" -eq 0 ]
 
   [ -f "$TARGET_DIR/.gitattributes" ]
@@ -39,19 +38,15 @@ load test_helper
 }
 
 @test "setup is idempotent" {
-  export CALLER_PWD="$TARGET_DIR"
-  "$REPO_DIR/.mise/tasks/setup"
+  notes setup
 
-  run "$REPO_DIR/.mise/tasks/setup"
+  run notes setup
   [ "$status" -eq 0 ]
   [[ "$output" == *"git-crypt already initialized — updating auxiliary files..."* ]]
 }
 
 @test "setup with custom patterns writes them to .gitattributes" {
-  export CALLER_PWD="$TARGET_DIR"
-  export usage_pattern="agents/*/Zettels/**
-notes/private/**"
-  run "$REPO_DIR/.mise/tasks/setup"
+  run notes setup -- --pattern "agents/*/Zettels/**" --pattern "notes/private/**"
   [ "$status" -eq 0 ]
 
   grep -q "agents/\*/Zettels/\*\*" "$TARGET_DIR/.gitattributes"
@@ -59,16 +54,14 @@ notes/private/**"
 }
 
 @test "setup installs pre-commit hook" {
-  export CALLER_PWD="$TARGET_DIR"
-  "$REPO_DIR/.mise/tasks/setup"
+  notes setup
 
   [ -x "$TARGET_DIR/.git/hooks/pre-commit" ]
   grep -q "git-crypt" "$TARGET_DIR/.git/hooks/pre-commit"
 }
 
 @test "setup without keys does not add gpg users" {
-  export CALLER_PWD="$TARGET_DIR"
-  "$REPO_DIR/.mise/tasks/setup"
+  notes setup
 
   # .git-crypt/keys/default/0/ only exists after first add-gpg-user
   [ ! -d "$TARGET_DIR/.git-crypt/keys/default/0" ]
@@ -78,7 +71,6 @@ notes/private/**"
 # These use a temporary GPG keyring with a test key
 
 generate_test_key() {
-  # Generate a throwaway GPG key in a temp homedir, return fingerprint
   local homedir="$1"
   gpg --homedir "$homedir" --batch --passphrase '' --quick-gen-key \
     "test-user <test@example.com>" default default never 2>/dev/null
@@ -95,13 +87,10 @@ generate_test_key() {
   fpr=$(generate_test_key "$keyhome")
   [ -n "$fpr" ]
 
-  # Export to a file
   local keyfile="$BATS_TEST_TMPDIR/test.pub.asc"
   gpg --homedir "$keyhome" --batch --armor --export "$fpr" > "$keyfile"
 
-  export usage_gpg_key="$fpr"
-  export usage_key_file="$keyfile"
-  run "$REPO_DIR/.mise/tasks/verify"
+  run notes verify -- --gpg-key "$fpr" --key-file "$keyfile"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Verified"* ]]
   [[ "$output" == *"matches the claimed fingerprint"* ]]
@@ -118,10 +107,7 @@ generate_test_key() {
   local keyfile="$BATS_TEST_TMPDIR/test.pub.asc"
   gpg --homedir "$keyhome" --batch --armor --export "$fpr" > "$keyfile"
 
-  # Use a bogus fingerprint
-  export usage_gpg_key="0000000000000000000000000000000000000000"
-  export usage_key_file="$keyfile"
-  run "$REPO_DIR/.mise/tasks/verify"
+  run notes verify -- --gpg-key "0000000000000000000000000000000000000000" --key-file "$keyfile"
   [ "$status" -ne 0 ]
   [[ "$output" == *"MISMATCH"* ]]
 }
@@ -134,9 +120,7 @@ generate_test_key() {
   local fpr
   fpr=$(generate_test_key "$keyhome")
 
-  export usage_gpg_key="$fpr"
-  export usage_key_file="-"
-  run bash -c "gpg --homedir '$keyhome' --batch --armor --export '$fpr' | '$REPO_DIR/.mise/tasks/verify'"
+  run bash -c "gpg --homedir '$keyhome' --batch --armor --export '$fpr' | notes verify -- --gpg-key '$fpr' --key-file -"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Verified"* ]]
 }
