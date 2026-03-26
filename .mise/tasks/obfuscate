@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+#MISE description="Obfuscate note filenames (reversible via deobfuscate)"
+#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--dry-run" help="Show what would be renamed without doing it"
+set -eo pipefail
+
+TARGET_DIR="${CALLER_PWD:-.}"
+notes_dir="$TARGET_DIR/${usage_dir:-notes}"
+manifest="$notes_dir/.manifest"
+
+if [ ! -d "$notes_dir" ]; then
+  echo "Error: notes directory not found: $notes_dir" >&2
+  exit 1
+fi
+
+# Load existing manifest if present
+declare -A name_to_id id_to_name
+if [ -f "$manifest" ]; then
+  while IFS=$'\t' read -r id name; do
+    [ -z "$id" ] && continue
+    name_to_id[$name]="$id"
+    id_to_name[$id]="$name"
+  done < "$manifest"
+fi
+
+# Find files that need obfuscating (recurse, flatten to notes root)
+to_rename=()
+to_restore=()
+while IFS= read -r f; do
+  [ ! -f "$f" ] && continue
+
+  # Relative path from notes_dir (e.g. "sub/note.md" or "note.md")
+  relpath="${f#"$notes_dir"/}"
+
+  # Skip manifest
+  [[ "$relpath" == ".manifest" ]] && continue
+
+  # Skip files already obfuscated (basename is a known ID)
+  base=$(basename "$f")
+  if [ -n "${id_to_name[$base]+x}" ]; then
+    continue
+  fi
+
+  # Rename files that already have an assigned ID (deobfuscated state)
+  if [ -n "${name_to_id[$relpath]+x}" ]; then
+    to_restore+=("$relpath")
+    continue
+  fi
+
+  to_rename+=("$relpath")
+done < <(find "$notes_dir" -type f | sort)
+
+if [ ${#to_rename[@]} -eq 0 ] && [ ${#to_restore[@]} -eq 0 ]; then
+  echo "Nothing to obfuscate."
+  exit 0
+fi
+
+# Restore files to their known IDs
+for relpath in "${to_restore[@]}"; do
+  id="${name_to_id[$relpath]}"
+  if [ "${usage_dry_run:-}" = "true" ]; then
+    echo "  $relpath → $id"
+  else
+    git -C "$TARGET_DIR" mv "$notes_dir/$relpath" "$notes_dir/$id"
+    echo "  $relpath → $id"
+  fi
+done
+
+# Generate IDs and rename new files (flatten into notes root)
+for relpath in "${to_rename[@]}"; do
+  # Generate a random 8-char hex ID
+  id=$(openssl rand -hex 4)
+
+  # Ensure no collision
+  while [ -n "${id_to_name[$id]+x}" ] || [ -f "$notes_dir/$id" ]; do
+    id=$(openssl rand -hex 4)
+  done
+
+  name_to_id[$relpath]="$id"
+  id_to_name[$id]="$relpath"
+
+  if [ "${usage_dry_run:-}" = "true" ]; then
+    echo "  $relpath → $id"
+  else
+    git -C "$TARGET_DIR" mv "$notes_dir/$relpath" "$notes_dir/$id"
+    echo "  $relpath → $id"
+  fi
+done
+
+# Clean up empty directories after flattening
+if [ "${usage_dry_run:-}" != "true" ]; then
+  find "$notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+fi
+
+# Clean up stale manifest entries (files that no longer exist)
+if [ "${usage_dry_run:-}" != "true" ]; then
+  stale=()
+  for name in "${!name_to_id[@]}"; do
+    id="${name_to_id[$name]}"
+    if [ ! -f "$notes_dir/$id" ]; then
+      stale+=("$name")
+    fi
+  done
+  for name in "${stale[@]}"; do
+    id="${name_to_id[$name]}"
+    unset "name_to_id[$name]"
+    unset "id_to_name[$id]"
+  done
+fi
+
+# Write manifest (sorted by name for stability)
+if [ "${usage_dry_run:-}" != "true" ]; then
+  {
+    for name in $(printf '%s\n' "${!name_to_id[@]}" | sort); do
+      printf '%s\t%s\n' "${name_to_id[$name]}" "$name"
+    done
+  } > "$manifest"
+  echo ""
+  echo "Manifest written: $manifest"
+  echo "Obfuscated ${#to_rename[@]} file(s)."
+fi
