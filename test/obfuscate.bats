@@ -98,6 +98,75 @@ setup() {
   [ ! -f "$CALLER_PWD/notes/delta.md" ]
 }
 
+# --- Stale manifest cleanup ---
+
+@test "obfuscate removes stale entries for deleted files" {
+  notes obfuscate
+  [ "$(wc -l < "$CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 3 ]
+
+  # Delete a file while deobfuscated
+  notes deobfuscate
+  git -C "$CALLER_PWD" rm "$CALLER_PWD/notes/alpha.md"
+  git -C "$CALLER_PWD" commit -q -m "delete alpha"
+
+  notes obfuscate
+
+  # Manifest should have 2 entries, not 3
+  [ "$(wc -l < "$CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 2 ]
+  ! grep -q "alpha.md" "$CALLER_PWD/notes/.manifest"
+}
+
+@test "obfuscate handles renamed files as delete + new" {
+  notes obfuscate
+  alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+
+  notes deobfuscate
+  git -C "$CALLER_PWD" mv "$CALLER_PWD/notes/alpha.md" "$CALLER_PWD/notes/alpha-v2.md"
+  git -C "$CALLER_PWD" commit -q -m "rename alpha"
+
+  notes obfuscate
+
+  # Old entry gone, new entry present
+  ! grep -q "alpha.md" "$CALLER_PWD/notes/.manifest"
+  grep -q "alpha-v2.md" "$CALLER_PWD/notes/.manifest"
+
+  # New file gets a different ID (old one freed)
+  new_id=$(grep "alpha-v2.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  [ -f "$CALLER_PWD/notes/$new_id" ]
+}
+
+# --- Same filename in different subdirectories ---
+
+@test "obfuscate handles same filename in different subdirectories" {
+  mkdir -p "$CALLER_PWD/notes/a" "$CALLER_PWD/notes/b"
+  echo -e "---\ntitle: Foo A\n---" > "$CALLER_PWD/notes/a/foo.md"
+  echo -e "---\ntitle: Foo B\n---" > "$CALLER_PWD/notes/b/foo.md"
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q -m "add same-name files in subdirs"
+
+  notes obfuscate
+
+  # Both should be in manifest with different IDs
+  grep -q "a/foo.md" "$CALLER_PWD/notes/.manifest"
+  grep -q "b/foo.md" "$CALLER_PWD/notes/.manifest"
+
+  id_a=$(grep "a/foo.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  id_b=$(grep "b/foo.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  [ "$id_a" != "$id_b" ]
+
+  # Both files exist in notes root
+  [ -f "$CALLER_PWD/notes/$id_a" ]
+  [ -f "$CALLER_PWD/notes/$id_b" ]
+
+  # Subdirectories should be gone
+  [ ! -d "$CALLER_PWD/notes/a" ]
+  [ ! -d "$CALLER_PWD/notes/b" ]
+
+  # Content preserved
+  [[ "$(cat "$CALLER_PWD/notes/$id_a")" == *"Foo A"* ]]
+  [[ "$(cat "$CALLER_PWD/notes/$id_b")" == *"Foo B"* ]]
+}
+
 # --- Stable IDs across cycles ---
 
 @test "obfuscate reuses IDs from preserved manifest" {

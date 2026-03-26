@@ -92,6 +92,22 @@ if [ "${usage_dry_run:-}" != "true" ]; then
   find "$notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
 fi
 
+# Clean up stale manifest entries (files that no longer exist)
+if [ "${usage_dry_run:-}" != "true" ]; then
+  stale=()
+  for name in "${!name_to_id[@]}"; do
+    id="${name_to_id[$name]}"
+    if [ ! -f "$notes_dir/$id" ]; then
+      stale+=("$name")
+    fi
+  done
+  for name in "${stale[@]}"; do
+    id="${name_to_id[$name]}"
+    unset "name_to_id[$name]"
+    unset "id_to_name[$id]"
+  done
+fi
+
 # Write manifest (sorted by name for stability)
 if [ "${usage_dry_run:-}" != "true" ]; then
   {
