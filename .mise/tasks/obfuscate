@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#MISE description="Obfuscate note filenames (reversible via deobfuscate)"
+#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--dry-run" help="Show what would be renamed without doing it"
+set -eo pipefail
+
+TARGET_DIR="${CALLER_PWD:-.}"
+notes_dir="$TARGET_DIR/${usage_dir:-notes}"
+manifest="$notes_dir/.manifest"
+
+if [ ! -d "$notes_dir" ]; then
+  echo "Error: notes directory not found: $notes_dir" >&2
+  exit 1
+fi
+
+# Load existing manifest if present
+declare -A name_to_id id_to_name
+if [ -f "$manifest" ]; then
+  while IFS=$'\t' read -r id name; do
+    [ -z "$id" ] && continue
+    name_to_id[$name]="$id"
+    id_to_name[$id]="$name"
+  done < "$manifest"
+fi
+
+# Find files that need obfuscating (skip manifest, index, graph, and already-obfuscated files)
+to_rename=()
+for f in "$notes_dir"/*; do
+  [ ! -f "$f" ] && continue
+  base=$(basename "$f")
+
+  # Skip manifest and generated files
+  [[ "$base" == ".manifest" ]] && continue
+  [[ "$base" == "index.md" ]] && continue
+  [[ "$base" == "graph.md" ]] && continue
+
+  # Skip files that are already obfuscated (exist as values in manifest)
+  if [ -n "${id_to_name[$base]+x}" ]; then
+    continue
+  fi
+
+  # Skip files that already have an assigned ID
+  if [ -n "${name_to_id[$base]+x}" ]; then
+    continue
+  fi
+
+  to_rename+=("$base")
+done
+
+if [ ${#to_rename[@]} -eq 0 ]; then
+  echo "Nothing to obfuscate."
+  exit 0
+fi
+
+# Generate IDs and rename
+for name in "${to_rename[@]}"; do
+  # Generate a random 6-char hex ID
+  id=$(openssl rand -hex 3)
+
+  # Ensure no collision
+  while [ -n "${id_to_name[$id]+x}" ]; do
+    id=$(openssl rand -hex 3)
+  done
+
+  name_to_id[$name]="$id"
+  id_to_name[$id]="$name"
+
+  if [ "${usage_dry_run:-}" = "true" ]; then
+    echo "  $name → $id"
+  else
+    git -C "$TARGET_DIR" mv "$notes_dir/$name" "$notes_dir/$id"
+    echo "  $name → $id"
+  fi
+done
+
+# Write manifest (sorted by name for stability)
+if [ "${usage_dry_run:-}" != "true" ]; then
+  {
+    for name in $(printf '%s\n' "${!name_to_id[@]}" | sort); do
+      printf '%s\t%s\n' "${name_to_id[$name]}" "$name"
+    done
+  } > "$manifest"
+  echo ""
+  echo "Manifest written: $manifest"
+  echo "Obfuscated ${#to_rename[@]} file(s)."
+fi

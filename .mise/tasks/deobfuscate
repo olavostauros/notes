@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+#MISE description="Restore obfuscated filenames to their original names"
+#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--dry-run" help="Show what would be renamed without doing it"
+set -eo pipefail
+
+TARGET_DIR="${CALLER_PWD:-.}"
+notes_dir="$TARGET_DIR/${usage_dir:-notes}"
+manifest="$notes_dir/.manifest"
+
+if [ ! -f "$manifest" ]; then
+  echo "Error: no manifest found at $manifest" >&2
+  exit 1
+fi
+
+# Load manifest
+declare -A id_to_name
+while IFS=$'\t' read -r id name; do
+  [ -z "$id" ] && continue
+  id_to_name[$id]="$name"
+done < "$manifest"
+
+# Find obfuscated files to restore
+restored=0
+for id in "${!id_to_name[@]}"; do
+  name="${id_to_name[$id]}"
+  if [ -f "$notes_dir/$id" ]; then
+    if [ "${usage_dry_run:-}" = "true" ]; then
+      echo "  $id → $name"
+    else
+      git -C "$TARGET_DIR" mv "$notes_dir/$id" "$notes_dir/$name"
+      echo "  $id → $name"
+    fi
+    ((restored++)) || true
+  fi
+done
+
+if [ "$restored" -eq 0 ]; then
+  echo "Nothing to deobfuscate."
+  exit 0
+fi
+
+if [ "${usage_dry_run:-}" != "true" ]; then
+  rm "$manifest"
+  echo ""
+  echo "Manifest removed. Restored $restored file(s)."
+fi
