@@ -157,6 +157,55 @@ setup() {
   [ -f "$CALLER_PWD/notes/.manifest" ]
 }
 
+# --- Pre-commit hook tests ---
+
+@test "pre-commit hook rejects un-obfuscated files when manifest exists" {
+  # Set up notes with encryption (installs the hook)
+  notes setup
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q -m "setup"
+
+  # Obfuscate existing notes
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q -m "obfuscated"
+
+  # Add a new un-obfuscated note and try to commit
+  echo -e "---\ntitle: Sneaky\n---\n# Sneaky" > "$CALLER_PWD/notes/sneaky.md"
+  git -C "$CALLER_PWD" add notes/sneaky.md
+
+  run git -C "$CALLER_PWD" commit -m "should fail"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"non-obfuscated filenames"* ]]
+  [[ "$output" == *"sneaky.md"* ]]
+}
+
+@test "pre-commit hook allows obfuscated files" {
+  notes setup
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q -m "setup"
+
+  # Obfuscate and commit — should succeed
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+
+  run git -C "$CALLER_PWD" commit -m "should succeed"
+  [ "$status" -eq 0 ]
+}
+
+@test "pre-commit hook allows commits when no manifest exists" {
+  notes setup
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q -m "setup"
+
+  # Add a note without obfuscating — no manifest means no check
+  echo -e "---\ntitle: Normal\n---" > "$CALLER_PWD/notes/normal.md"
+  git -C "$CALLER_PWD" add notes/normal.md
+
+  run git -C "$CALLER_PWD" commit -m "should succeed"
+  [ "$status" -eq 0 ]
+}
+
 @test "round-trip preserves all content and metadata" {
   notes obfuscate
   notes deobfuscate
