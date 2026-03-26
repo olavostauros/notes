@@ -25,6 +25,7 @@ fi
 
 # Find files that need obfuscating (recurse, flatten to notes root)
 to_rename=()
+to_restore=()
 while IFS= read -r f; do
   [ ! -f "$f" ] && continue
 
@@ -40,20 +41,32 @@ while IFS= read -r f; do
     continue
   fi
 
-  # Skip files that already have an assigned ID (by relpath)
+  # Rename files that already have an assigned ID (deobfuscated state)
   if [ -n "${name_to_id[$relpath]+x}" ]; then
+    to_restore+=("$relpath")
     continue
   fi
 
   to_rename+=("$relpath")
 done < <(find "$notes_dir" -type f | sort)
 
-if [ ${#to_rename[@]} -eq 0 ]; then
+if [ ${#to_rename[@]} -eq 0 ] && [ ${#to_restore[@]} -eq 0 ]; then
   echo "Nothing to obfuscate."
   exit 0
 fi
 
-# Generate IDs and rename (flatten into notes root)
+# Restore files to their known IDs
+for relpath in "${to_restore[@]}"; do
+  id="${name_to_id[$relpath]}"
+  if [ "${usage_dry_run:-}" = "true" ]; then
+    echo "  $relpath → $id"
+  else
+    git -C "$TARGET_DIR" mv "$notes_dir/$relpath" "$notes_dir/$id"
+    echo "  $relpath → $id"
+  fi
+done
+
+# Generate IDs and rename new files (flatten into notes root)
 for relpath in "${to_rename[@]}"; do
   # Generate a random 8-char hex ID
   id=$(openssl rand -hex 4)

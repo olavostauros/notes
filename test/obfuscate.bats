@@ -109,6 +109,27 @@ setup() {
 
   manifest_second=$(cat "$CALLER_PWD/notes/.manifest")
   [ "$manifest_first" = "$manifest_second" ]
+
+  # Verify files are actually obfuscated, not just manifest match
+  [ ! -f "$CALLER_PWD/notes/alpha.md" ]
+  [ ! -f "$CALLER_PWD/notes/beta.md" ]
+  [ ! -f "$CALLER_PWD/notes/gamma.txt" ]
+}
+
+@test "obfuscate after deobfuscate renames files to their known IDs" {
+  notes obfuscate
+  alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+
+  notes deobfuscate
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+  [ ! -f "$CALLER_PWD/notes/$alpha_id" ]
+
+  notes obfuscate
+  [ ! -f "$CALLER_PWD/notes/alpha.md" ]
+  [ -f "$CALLER_PWD/notes/$alpha_id" ]
+
+  # Content survived the round-trip
+  [[ "$(cat "$CALLER_PWD/notes/$alpha_id")" == *"# Alpha"* ]]
 }
 
 # --- Flatten + recurse ---
