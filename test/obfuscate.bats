@@ -17,6 +17,8 @@ setup() {
   git -C "$CALLER_PWD" commit -q -m "init"
 }
 
+# --- Core obfuscation ---
+
 @test "obfuscate renames files to hex IDs" {
   run notes obfuscate
   [ "$status" -eq 0 ]
@@ -27,17 +29,14 @@ setup() {
   [ ! -f "$CALLER_PWD/notes/beta.md" ]
   [ ! -f "$CALLER_PWD/notes/gamma.txt" ]
 
-  # Manifest should exist
+  # Manifest should exist with 3 entries
   [ -f "$CALLER_PWD/notes/.manifest" ]
-
-  # Should have 3 entries in manifest
   [ "$(wc -l < "$CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 3 ]
 }
 
 @test "obfuscate creates extensionless files" {
   notes obfuscate
 
-  # No files with extensions should remain (except .manifest)
   for f in "$CALLER_PWD/notes/"*; do
     [ ! -f "$f" ] && continue
     base=$(basename "$f")
@@ -45,10 +44,17 @@ setup() {
   done
 }
 
+@test "obfuscate generates 8-char hex IDs" {
+  notes obfuscate
+
+  while IFS=$'\t' read -r id name; do
+    [[ "$id" =~ ^[0-9a-f]{8}$ ]]
+  done < "$CALLER_PWD/notes/.manifest"
+}
+
 @test "obfuscate preserves file content" {
   notes obfuscate
 
-  # Read the manifest to find where alpha.md went
   id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
   [[ "$(cat "$CALLER_PWD/notes/$id")" == *"# Alpha"* ]]
 }
@@ -56,7 +62,6 @@ setup() {
 @test "obfuscate is idempotent" {
   notes obfuscate
 
-  # Capture state after first run
   manifest_before=$(cat "$CALLER_PWD/notes/.manifest")
   files_before=$(ls "$CALLER_PWD/notes/" | sort)
 
@@ -64,7 +69,6 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"Nothing to obfuscate"* ]]
 
-  # State unchanged
   [ "$(cat "$CALLER_PWD/notes/.manifest")" = "$manifest_before" ]
   [ "$(ls "$CALLER_PWD/notes/" | sort)" = "$files_before" ]
 }
@@ -74,31 +78,13 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"alpha.md"* ]]
 
-  # Files should still have original names
   [ -f "$CALLER_PWD/notes/alpha.md" ]
   [ ! -f "$CALLER_PWD/notes/.manifest" ]
-}
-
-@test "obfuscate skips generated files" {
-  echo "generated" > "$CALLER_PWD/notes/index.md"
-  echo "generated" > "$CALLER_PWD/notes/graph.md"
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q -m "add generated files"
-
-  notes obfuscate
-
-  # Generated files should still have their original names
-  [ -f "$CALLER_PWD/notes/index.md" ]
-  [ -f "$CALLER_PWD/notes/graph.md" ]
-
-  # Only the 3 real notes should be obfuscated
-  [ "$(wc -l < "$CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 3 ]
 }
 
 @test "obfuscate handles new files added after initial obfuscation" {
   notes obfuscate
 
-  # Add a new note
   echo -e "---\ntitle: Delta\n---\n# Delta" > "$CALLER_PWD/notes/delta.md"
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q -m "add delta"
@@ -108,12 +94,58 @@ setup() {
   [[ "$output" == *"delta.md"* ]]
   [[ "$output" == *"Obfuscated 1 file(s)"* ]]
 
-  # Manifest should now have 4 entries
   [ "$(wc -l < "$CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 4 ]
-
-  # Original 3 IDs should be unchanged
   [ ! -f "$CALLER_PWD/notes/delta.md" ]
 }
+
+# --- Stable IDs across cycles ---
+
+@test "obfuscate reuses IDs from preserved manifest" {
+  notes obfuscate
+  manifest_first=$(cat "$CALLER_PWD/notes/.manifest")
+
+  notes deobfuscate
+  notes obfuscate
+
+  manifest_second=$(cat "$CALLER_PWD/notes/.manifest")
+  [ "$manifest_first" = "$manifest_second" ]
+}
+
+# --- Flatten + recurse ---
+
+@test "obfuscate flattens subdirectory files into notes root" {
+  mkdir -p "$CALLER_PWD/notes/sub"
+  echo -e "---\ntitle: Deep\n---\n# Deep" > "$CALLER_PWD/notes/sub/deep.md"
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q -m "add subdir note"
+
+  notes obfuscate
+
+  # Subdirectory should be gone (emptied and cleaned up)
+  [ ! -d "$CALLER_PWD/notes/sub" ]
+
+  # Manifest should have relative path
+  grep -q "sub/deep.md" "$CALLER_PWD/notes/.manifest"
+
+  # All files should be in notes root
+  while IFS=$'\t' read -r id name; do
+    [ -f "$CALLER_PWD/notes/$id" ]
+  done < "$CALLER_PWD/notes/.manifest"
+}
+
+@test "obfuscate flattens nested subdirectories" {
+  mkdir -p "$CALLER_PWD/notes/a/b/c"
+  echo -e "---\ntitle: Nested\n---" > "$CALLER_PWD/notes/a/b/c/nested.md"
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q -m "add nested note"
+
+  notes obfuscate
+
+  [ ! -d "$CALLER_PWD/notes/a" ]
+  grep -q "a/b/c/nested.md" "$CALLER_PWD/notes/.manifest"
+}
+
+# --- Deobfuscate ---
 
 @test "deobfuscate restores original filenames" {
   notes obfuscate
@@ -121,13 +153,30 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"Restored 3 file(s)"* ]]
 
-  # Original files should be back
   [ -f "$CALLER_PWD/notes/alpha.md" ]
   [ -f "$CALLER_PWD/notes/beta.md" ]
   [ -f "$CALLER_PWD/notes/gamma.txt" ]
+}
 
-  # Manifest should be removed
-  [ ! -f "$CALLER_PWD/notes/.manifest" ]
+@test "deobfuscate preserves manifest for stable IDs" {
+  notes obfuscate
+  notes deobfuscate
+
+  [ -f "$CALLER_PWD/notes/.manifest" ]
+}
+
+@test "deobfuscate recreates subdirectories" {
+  mkdir -p "$CALLER_PWD/notes/sub"
+  echo -e "---\ntitle: Deep\n---\n# Deep" > "$CALLER_PWD/notes/sub/deep.md"
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q -m "add subdir note"
+
+  notes obfuscate
+  [ ! -d "$CALLER_PWD/notes/sub" ]
+
+  notes deobfuscate
+  [ -f "$CALLER_PWD/notes/sub/deep.md" ]
+  [[ "$(cat "$CALLER_PWD/notes/sub/deep.md")" == *"# Deep"* ]]
 }
 
 @test "deobfuscate preserves file content" {
@@ -152,25 +201,31 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"alpha.md"* ]]
 
-  # Obfuscated files should still be in place
   [ -f "$CALLER_PWD/notes/$id" ]
-  [ -f "$CALLER_PWD/notes/.manifest" ]
 }
 
-# --- Pre-commit hook tests ---
+@test "round-trip preserves all content and metadata" {
+  notes obfuscate
+  notes deobfuscate
+
+  run farts get title "$CALLER_PWD/notes/alpha.md"
+  [ "$output" = "Alpha" ]
+
+  run farts get title "$CALLER_PWD/notes/beta.md"
+  [ "$output" = "Beta" ]
+}
+
+# --- Pre-commit hook ---
 
 @test "pre-commit hook rejects un-obfuscated files when manifest exists" {
-  # Set up notes with encryption (installs the hook)
   notes setup
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q -m "setup"
 
-  # Obfuscate existing notes
   notes obfuscate
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q -m "obfuscated"
 
-  # Add a new un-obfuscated note and try to commit
   echo -e "---\ntitle: Sneaky\n---\n# Sneaky" > "$CALLER_PWD/notes/sneaky.md"
   git -C "$CALLER_PWD" add notes/sneaky.md
 
@@ -185,7 +240,6 @@ setup() {
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q -m "setup"
 
-  # Obfuscate and commit — should succeed
   notes obfuscate
   git -C "$CALLER_PWD" add -A
 
@@ -198,22 +252,9 @@ setup() {
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q -m "setup"
 
-  # Add a note without obfuscating — no manifest means no check
   echo -e "---\ntitle: Normal\n---" > "$CALLER_PWD/notes/normal.md"
   git -C "$CALLER_PWD" add notes/normal.md
 
   run git -C "$CALLER_PWD" commit -m "should succeed"
   [ "$status" -eq 0 ]
-}
-
-@test "round-trip preserves all content and metadata" {
-  notes obfuscate
-  notes deobfuscate
-
-  # Verify frontmatter survived
-  run farts get title "$CALLER_PWD/notes/alpha.md"
-  [ "$output" = "Alpha" ]
-
-  run farts get title "$CALLER_PWD/notes/beta.md"
-  [ "$output" = "Beta" ]
 }

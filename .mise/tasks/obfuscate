@@ -23,55 +23,61 @@ if [ -f "$manifest" ]; then
   done < "$manifest"
 fi
 
-# Find files that need obfuscating (skip manifest, index, graph, and already-obfuscated files)
+# Find files that need obfuscating (recurse, flatten to notes root)
 to_rename=()
-for f in "$notes_dir"/*; do
+while IFS= read -r f; do
   [ ! -f "$f" ] && continue
+
+  # Relative path from notes_dir (e.g. "sub/note.md" or "note.md")
+  relpath="${f#"$notes_dir"/}"
+
+  # Skip manifest
+  [[ "$relpath" == ".manifest" ]] && continue
+
+  # Skip files already obfuscated (basename is a known ID)
   base=$(basename "$f")
-
-  # Skip manifest and generated files
-  [[ "$base" == ".manifest" ]] && continue
-  [[ "$base" == "index.md" ]] && continue
-  [[ "$base" == "graph.md" ]] && continue
-
-  # Skip files that are already obfuscated (exist as values in manifest)
   if [ -n "${id_to_name[$base]+x}" ]; then
     continue
   fi
 
-  # Skip files that already have an assigned ID
-  if [ -n "${name_to_id[$base]+x}" ]; then
+  # Skip files that already have an assigned ID (by relpath)
+  if [ -n "${name_to_id[$relpath]+x}" ]; then
     continue
   fi
 
-  to_rename+=("$base")
-done
+  to_rename+=("$relpath")
+done < <(find "$notes_dir" -type f | sort)
 
 if [ ${#to_rename[@]} -eq 0 ]; then
   echo "Nothing to obfuscate."
   exit 0
 fi
 
-# Generate IDs and rename
-for name in "${to_rename[@]}"; do
-  # Generate a random 6-char hex ID
-  id=$(openssl rand -hex 3)
+# Generate IDs and rename (flatten into notes root)
+for relpath in "${to_rename[@]}"; do
+  # Generate a random 8-char hex ID
+  id=$(openssl rand -hex 4)
 
   # Ensure no collision
-  while [ -n "${id_to_name[$id]+x}" ]; do
-    id=$(openssl rand -hex 3)
+  while [ -n "${id_to_name[$id]+x}" ] || [ -f "$notes_dir/$id" ]; do
+    id=$(openssl rand -hex 4)
   done
 
-  name_to_id[$name]="$id"
-  id_to_name[$id]="$name"
+  name_to_id[$relpath]="$id"
+  id_to_name[$id]="$relpath"
 
   if [ "${usage_dry_run:-}" = "true" ]; then
-    echo "  $name → $id"
+    echo "  $relpath → $id"
   else
-    git -C "$TARGET_DIR" mv "$notes_dir/$name" "$notes_dir/$id"
-    echo "  $name → $id"
+    git -C "$TARGET_DIR" mv "$notes_dir/$relpath" "$notes_dir/$id"
+    echo "  $relpath → $id"
   fi
 done
+
+# Clean up empty directories after flattening
+if [ "${usage_dry_run:-}" != "true" ]; then
+  find "$notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+fi
 
 # Write manifest (sorted by name for stability)
 if [ "${usage_dry_run:-}" != "true" ]; then

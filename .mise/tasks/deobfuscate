@@ -23,13 +23,16 @@ done < "$manifest"
 # Find obfuscated files to restore
 restored=0
 for id in "${!id_to_name[@]}"; do
-  name="${id_to_name[$id]}"
+  relpath="${id_to_name[$id]}"
   if [ -f "$notes_dir/$id" ]; then
     if [ "${usage_dry_run:-}" = "true" ]; then
-      echo "  $id → $name"
+      echo "  $id → $relpath"
     else
-      git -C "$TARGET_DIR" mv "$notes_dir/$id" "$notes_dir/$name"
-      echo "  $id → $name"
+      # Recreate subdirectory if needed
+      target_dir=$(dirname "$notes_dir/$relpath")
+      [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
+      git -C "$TARGET_DIR" mv "$notes_dir/$id" "$notes_dir/$relpath"
+      echo "  $id → $relpath"
     fi
     ((restored++)) || true
   fi
@@ -41,7 +44,6 @@ if [ "$restored" -eq 0 ]; then
 fi
 
 if [ "${usage_dry_run:-}" != "true" ]; then
-  rm "$manifest"
   echo ""
-  echo "Manifest removed. Restored $restored file(s)."
+  echo "Restored $restored file(s). Manifest preserved for stable IDs."
 fi

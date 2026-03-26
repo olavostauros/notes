@@ -122,8 +122,6 @@ if [ -f "\$NOTES_ROOT/.manifest" ]; then
     [[ "\$file" != "\$NOTES_ROOT/"* ]] && continue
     base=\$(basename "\$file")
     [[ "\$base" == ".manifest" ]] && continue
-    [[ "\$base" == "index.md" ]] && continue
-    [[ "\$base" == "graph.md" ]] && continue
     if [ -z "\${valid_ids[\$base]+x}" ]; then
       unobfuscated+=("\$file")
     fi
