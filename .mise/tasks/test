@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 #MISE description="Run test suite"
 #MISE hide=true
+#USAGE arg "[args...]" help="Test files or bats flags (e.g., test/obfuscate.bats, --filter 'pattern')"
 set -eo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-exec bats "$REPO_DIR/test/"
+
+if [ $# -gt 0 ]; then
+  exec bats "$@"
+else
+  exec bats "$REPO_DIR/test/"
+fi
