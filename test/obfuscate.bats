@@ -365,7 +365,7 @@ EOF
 
 # --- Pre-commit hook behavior ---
 
-@test "pre-commit hook rejects un-obfuscated files when manifest exists" {
+@test "pre-commit hook rejects un-obfuscated files in guard mode" {
   notes setup
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q -m "setup"
@@ -377,7 +377,7 @@ EOF
   echo -e "---\ntitle: Sneaky\n---\n# Sneaky" > "$CALLER_PWD/notes/sneaky.md"
   git -C "$CALLER_PWD" add notes/sneaky.md
 
-  run git -C "$CALLER_PWD" commit -m "should fail"
+  NOTES_OBFUSCATE_HOOK=guard run git -C "$CALLER_PWD" commit -m "should fail"
   [ "$status" -ne 0 ]
   [[ "$output" == *"non-obfuscated filenames"* ]]
   [[ "$output" == *"sneaky.md"* ]]
@@ -395,7 +395,7 @@ EOF
   [ "$status" -eq 0 ]
 }
 
-@test "pre-commit hook rejects staged renames from obfuscated to deobfuscated" {
+@test "pre-commit hook rejects staged renames in guard mode" {
   notes setup
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q -m "setup"
@@ -408,10 +408,37 @@ EOF
   notes deobfuscate
   git -C "$CALLER_PWD" add -A
 
-  # The hook should reject this — deobfuscated names are staged
-  run git -C "$CALLER_PWD" commit -m "should fail"
+  # The hook should reject this in guard mode
+  NOTES_OBFUSCATE_HOOK=guard run git -C "$CALLER_PWD" commit -m "should fail"
   [ "$status" -ne 0 ]
   [[ "$output" == *"non-obfuscated filenames"* ]]
+}
+
+@test "pre-commit hook auto-obfuscates by default" {
+  # Obfuscate and commit the obfuscated state
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
+
+  # Deobfuscate (installs the auto-obfuscate hook)
+  notes deobfuscate
+
+  # Add a new deobfuscated file + stage everything
+  echo -e "---\ntitle: Sneaky\n---\n# Sneaky" > "$CALLER_PWD/notes/sneaky.md"
+  git -C "$CALLER_PWD" add -A
+
+  # Should succeed — hook auto-obfuscates before commit
+  run git -C "$CALLER_PWD" commit -m "should succeed"
+  [ "$status" -eq 0 ]
+
+  # All files should be obfuscated on disk
+  [ ! -f "$CALLER_PWD/notes/alpha.md" ]
+  [ ! -f "$CALLER_PWD/notes/beta.md" ]
+  [ ! -f "$CALLER_PWD/notes/sneaky.md" ]
+
+  # Manifest should have all entries
+  grep -q "sneaky.md" "$CALLER_PWD/notes/.manifest"
+  grep -q "alpha.md" "$CALLER_PWD/notes/.manifest"
 }
 
 @test "pre-commit hook allows commits when no manifest exists" {
