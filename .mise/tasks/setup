@@ -16,7 +16,7 @@ if is_initialized || [ -d "$TARGET_DIR/.git/git-crypt" ]; then
   echo "git-crypt already initialized — updating auxiliary files..."
 else
   echo "Initializing git-crypt..."
-  rudi init
+  rudi init --no-user
 fi
 
 # --- Add GPG keys via rudi ---
