@@ -9,3 +9,8 @@ require_rudi
 
 cd "$TARGET_DIR"
 rudi unlock
+
+# Deobfuscate filenames if a manifest exists
+if [ -f "$TARGET_DIR/notes/.manifest" ]; then
+  CALLER_PWD="$TARGET_DIR" "$MISE_CONFIG_ROOT/.mise/tasks/deobfuscate"
+fi

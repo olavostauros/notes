@@ -138,3 +138,113 @@ generate_test_key() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"Verified"* ]]
 }
+
+# --- lock/unlock + obfuscation chaining ---
+
+setup_encrypted_repo_with_obfuscation() {
+  notes setup
+
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  echo "alpha content" > "$TARGET_DIR/notes/alpha.md"
+  echo "beta content" > "$TARGET_DIR/notes/beta.md"
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q -m "Add notes"
+
+  # Obfuscate to create the manifest
+  notes obfuscate
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q -m "Obfuscate"
+
+  # Deobfuscate so we're in working state
+  notes deobfuscate
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q -m "Deobfuscate for working"
+}
+
+@test "lock obfuscates filenames before locking" {
+  setup_encrypted_repo_with_obfuscation
+
+  # Files should be deobfuscated before lock
+  [ -f "$TARGET_DIR/notes/alpha.md" ]
+  [ -f "$TARGET_DIR/notes/beta.md" ]
+
+  notes lock
+
+  # Files should be obfuscated (hex IDs, not readable names)
+  [ ! -f "$TARGET_DIR/notes/alpha.md" ]
+  [ ! -f "$TARGET_DIR/notes/beta.md" ]
+
+  # Manifest should still exist (also encrypted, but file present)
+  [ -f "$TARGET_DIR/notes/.manifest" ]
+}
+
+@test "unlock deobfuscates filenames after unlocking" {
+  setup_encrypted_repo_with_obfuscation
+
+  notes lock
+  # Files are obfuscated + encrypted
+  [ ! -f "$TARGET_DIR/notes/alpha.md" ]
+
+  notes unlock
+
+  # Files should be back to readable names
+  [ -f "$TARGET_DIR/notes/alpha.md" ]
+  [ -f "$TARGET_DIR/notes/beta.md" ]
+  grep -q "alpha content" "$TARGET_DIR/notes/alpha.md"
+  grep -q "beta content" "$TARGET_DIR/notes/beta.md"
+}
+
+@test "lock → unlock round-trip preserves content with obfuscation" {
+  setup_encrypted_repo_with_obfuscation
+
+  notes lock
+  notes unlock
+
+  grep -q "alpha content" "$TARGET_DIR/notes/alpha.md"
+  grep -q "beta content" "$TARGET_DIR/notes/beta.md"
+}
+
+@test "unlock without manifest does not attempt deobfuscation" {
+  # Plain encrypted repo, no obfuscation
+  notes setup
+
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  echo "plain note" > "$TARGET_DIR/notes/plain.md"
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q -m "Add note"
+
+  notes lock
+  run notes unlock
+  [ "$status" -eq 0 ]
+
+  # File should be readable with original name
+  [ -f "$TARGET_DIR/notes/plain.md" ]
+  grep -q "plain note" "$TARGET_DIR/notes/plain.md"
+}
+
+@test "lock without manifest does not attempt obfuscation" {
+  notes setup
+
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  echo "plain note" > "$TARGET_DIR/notes/plain.md"
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q -m "Add note"
+
+  run notes lock
+  [ "$status" -eq 0 ]
+
+  # File should still have original name (just encrypted)
+  [ -f "$TARGET_DIR/notes/plain.md" ]
+}

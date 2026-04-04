@@ -1,5 +1,14 @@
+[settings]
+quiet = true
+task_output = "interleave"
+experimental = true
+
+[plugins]
+shiv = "https://github.com/KnickKnackLabs/vfox-shiv"
+
 [tools]
 bats = "1.13.0"
+"shiv:rudi" = "latest"
 # git-crypt has no macOS binary on GitHub releases.
 # macOS: brew install git-crypt
 # Linux: downloaded from GitHub releases by rudi install

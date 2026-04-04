@@ -10,6 +10,17 @@ require_rudi
 
 cd "$TARGET_DIR"
 
+# Obfuscate filenames before locking if currently deobfuscated.
+# The committed state should always be obfuscated — deobfuscation
+# is a local convenience that unlock provides.
+if [ -f "$TARGET_DIR/notes/.manifest" ]; then
+  CALLER_PWD="$TARGET_DIR" "$MISE_CONFIG_ROOT/.mise/tasks/obfuscate"
+  git -C "$TARGET_DIR" add notes/
+  if ! git -C "$TARGET_DIR" diff --cached --quiet 2>/dev/null; then
+    git -C "$TARGET_DIR" commit -q --no-verify -m "obfuscate filenames before lock"
+  fi
+fi
+
 if [ -n "${usage_key:-}" ]; then
   rudi lock --key "$usage_key"
 else
