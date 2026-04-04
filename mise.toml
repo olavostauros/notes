@@ -8,7 +8,7 @@ shiv = "https://github.com/KnickKnackLabs/vfox-shiv"
 
 [tools]
 bats = "1.13.0"
-"shiv:rudi" = "0.2.0"
+"shiv:rudi" = "0.3.0"
 # git-crypt has no macOS binary on GitHub releases.
 # macOS: brew install git-crypt
 # Linux: downloaded from GitHub releases by rudi install
