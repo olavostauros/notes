@@ -53,11 +53,18 @@ load test_helper
   grep -q "notes/private/\*\*" "$TARGET_DIR/.gitattributes"
 }
 
-@test "setup installs pre-commit hook" {
+@test "setup installs pre-commit hooks" {
   notes setup
 
+  # Dispatcher
   [ -x "$TARGET_DIR/.git/hooks/pre-commit" ]
-  grep -q "git-crypt" "$TARGET_DIR/.git/hooks/pre-commit"
+  grep -q "pre-commit.d" "$TARGET_DIR/.git/hooks/pre-commit"
+
+  # Individual hooks
+  [ -x "$TARGET_DIR/.git/hooks/pre-commit.d/encryption" ]
+  grep -q "git-crypt" "$TARGET_DIR/.git/hooks/pre-commit.d/encryption"
+  [ -x "$TARGET_DIR/.git/hooks/pre-commit.d/obfuscation" ]
+  grep -q "manifest" "$TARGET_DIR/.git/hooks/pre-commit.d/obfuscation"
 }
 
 @test "setup without keys does not add gpg users" {

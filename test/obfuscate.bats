@@ -307,6 +307,64 @@ setup() {
 
 # --- Pre-commit hook ---
 
+# --- Hook installation ---
+
+@test "deobfuscate installs obfuscation pre-commit hook" {
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscate"
+
+  notes deobfuscate
+
+  [ -x "$CALLER_PWD/.git/hooks/pre-commit" ]
+  grep -q "pre-commit.d" "$CALLER_PWD/.git/hooks/pre-commit"
+  [ -x "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation" ]
+  grep -q "manifest" "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation"
+}
+
+@test "deobfuscate dry-run does not install hook" {
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscate"
+
+  notes deobfuscate -- --dry-run
+
+  [ ! -d "$CALLER_PWD/.git/hooks/pre-commit.d" ]
+}
+
+@test "dispatcher runs all hooks in pre-commit.d" {
+  # Set up dispatcher with two hooks — one passes, one would fail
+  mkdir -p "$CALLER_PWD/.git/hooks/pre-commit.d"
+  cat > "$CALLER_PWD/.git/hooks/pre-commit" <<'EOF'
+#!/usr/bin/env bash
+set -eo pipefail
+HOOK_DIR="$(dirname "$0")/pre-commit.d"
+for hook in "$HOOK_DIR"/*; do
+  [ -x "$hook" ] && "$hook" || exit $?
+done
+EOF
+  chmod +x "$CALLER_PWD/.git/hooks/pre-commit"
+
+  # Hook that passes
+  echo '#!/usr/bin/env bash' > "$CALLER_PWD/.git/hooks/pre-commit.d/pass"
+  echo 'exit 0' >> "$CALLER_PWD/.git/hooks/pre-commit.d/pass"
+  chmod +x "$CALLER_PWD/.git/hooks/pre-commit.d/pass"
+
+  # Hook that fails
+  echo '#!/usr/bin/env bash' > "$CALLER_PWD/.git/hooks/pre-commit.d/fail"
+  echo 'echo "blocked" >&2; exit 1' >> "$CALLER_PWD/.git/hooks/pre-commit.d/fail"
+  chmod +x "$CALLER_PWD/.git/hooks/pre-commit.d/fail"
+
+  echo "test" > "$CALLER_PWD/notes/test-file.md"
+  git -C "$CALLER_PWD" add notes/test-file.md
+
+  run git -C "$CALLER_PWD" commit -m "should fail"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"blocked"* ]]
+}
+
+# --- Pre-commit hook behavior ---
+
 @test "pre-commit hook rejects un-obfuscated files when manifest exists" {
   notes setup
   git -C "$CALLER_PWD" add -A

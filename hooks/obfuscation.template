@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Prevent accidentally committing deobfuscated filenames.
+set -eo pipefail
+
+NOTES_ROOT="__NOTES_DIR__"
+
+if [ -f "$NOTES_ROOT/.manifest" ]; then
+  declare -A valid_ids
+  while IFS=$'\t' read -r id name; do
+    [ -z "$id" ] && continue
+    valid_ids[$id]=1
+  done < "$NOTES_ROOT/.manifest"
+
+  unobfuscated=()
+  while IFS= read -r file; do
+    [[ "$file" != "$NOTES_ROOT/"* ]] && continue
+    base=$(basename "$file")
+    [[ "$base" == ".manifest" ]] && continue
+    if [ -z "${valid_ids[$base]+x}" ]; then
+      unobfuscated+=("$file")
+    fi
+  done < <(git diff --cached --name-only --diff-filter=ACM)
+
+  if [ "${#unobfuscated[@]}" -gt 0 ]; then
+    echo "ERROR: Staged notes have non-obfuscated filenames:" >&2
+    printf '  %s\n' "${unobfuscated[@]}" >&2
+    echo "" >&2
+    echo "Run 'notes obfuscate' first, then re-stage." >&2
+    exit 1
+  fi
+fi

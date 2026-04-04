@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Pre-commit dispatcher — runs all executable scripts in pre-commit.d/
+set -eo pipefail
+HOOK_DIR="$(dirname "$0")/pre-commit.d"
+for hook in "$HOOK_DIR"/*; do
+  [ -x "$hook" ] && "$hook" || exit $?
+done

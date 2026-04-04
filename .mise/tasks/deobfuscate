@@ -4,7 +4,7 @@
 #USAGE flag "--dry-run" help="Show what would be renamed without doing it"
 set -eo pipefail
 
-TARGET_DIR="${CALLER_PWD:-.}"
+source "$MISE_CONFIG_ROOT/lib/common.sh"
 notes_dir="$TARGET_DIR/${usage_dir:-notes}"
 manifest="$notes_dir/.manifest"
 
@@ -44,6 +44,8 @@ if [ "$restored" -eq 0 ]; then
 fi
 
 if [ "${usage_dry_run:-}" != "true" ]; then
+  # Install the obfuscation pre-commit hook to prevent accidental pushes
+  install_obfuscation_hook "${usage_dir:-notes}"
   echo ""
   echo "Restored $restored file(s). Manifest preserved for stable IDs."
 fi
