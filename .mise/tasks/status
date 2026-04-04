@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 #MISE description="Show encryption and obfuscation status"
 #USAGE flag "--json" help="Output as JSON"
+#USAGE flag "--dir <dir>" help="Notes directory name (default: notes)"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 require_git
 
 JSON="${usage_json:-false}"
+NOTES_DIR="${usage_dir:-notes}"
 
 cd "$TARGET_DIR"
 
@@ -15,34 +17,29 @@ cd "$TARGET_DIR"
 enc_status="not_initialized"
 enc_unlocked=false
 if is_initialized; then
-  if command -v rudi &>/dev/null; then
-    if rudi status -e &>/dev/null 2>&1; then
-      enc_status="unlocked"
-      enc_unlocked=true
-    else
-      enc_status="locked"
-    fi
+  # git-crypt stores the symmetric key here when unlocked
+  if [ -f "$TARGET_DIR/.git/git-crypt/keys/default" ]; then
+    enc_status="unlocked"
+    enc_unlocked=true
   else
-    enc_status="rudi_missing"
+    enc_status="locked"
   fi
 fi
 
 # --- Obfuscation ---
 
 obf_status="none"
-obf_count=0
 total_notes=0
-if [ -f "notes/.manifest" ]; then
-  total_notes=$(wc -l < "notes/.manifest" | tr -d ' ')
-  first_hash=$(head -1 "notes/.manifest" | cut -f1)
-  first_name=$(head -1 "notes/.manifest" | cut -f2)
+if [ -f "$NOTES_DIR/.manifest" ]; then
+  total_notes=$(wc -l < "$NOTES_DIR/.manifest" | tr -d ' ')
+  first_hash=$(head -1 "$NOTES_DIR/.manifest" | cut -f1)
+  first_name=$(head -1 "$NOTES_DIR/.manifest" | cut -f2)
 
-  if [ -n "$first_name" ] && [ -f "notes/$first_name" ]; then
+  if [ -n "$first_name" ] && [ -f "$NOTES_DIR/$first_name" ]; then
     obf_status="deobfuscated"
-  elif [ -n "$first_hash" ] && [ -f "notes/$first_hash" ]; then
+  elif [ -n "$first_hash" ] && [ -f "$NOTES_DIR/$first_hash" ]; then
     obf_status="obfuscated"
   fi
-  obf_count=$total_notes
 fi
 
 # --- Output ---
@@ -52,7 +49,6 @@ if [ "$JSON" = "true" ]; then
     --arg enc "$enc_status" \
     --argjson enc_unlocked "$enc_unlocked" \
     --arg obf "$obf_status" \
-    --argjson obf_count "$obf_count" \
     --argjson total_notes "$total_notes" \
     '{
       encryption: { status: $enc, unlocked: $enc_unlocked },
