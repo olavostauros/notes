@@ -162,7 +162,7 @@ setup_encrypted_repo_with_obfuscation() {
   # Deobfuscate so we're in working state
   notes deobfuscate
   git -C "$TARGET_DIR" add .
-  git -C "$TARGET_DIR" commit -q -m "Deobfuscate for working"
+  git -C "$TARGET_DIR" commit -q --no-verify -m "Deobfuscate for working"
 }
 
 @test "lock obfuscates filenames before locking" {

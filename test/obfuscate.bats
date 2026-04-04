@@ -122,7 +122,7 @@ setup() {
 
   notes deobfuscate
   git -C "$CALLER_PWD" mv "$CALLER_PWD/notes/alpha.md" "$CALLER_PWD/notes/alpha-v2.md"
-  git -C "$CALLER_PWD" commit -q -m "rename alpha"
+  git -C "$CALLER_PWD" commit -q --no-verify -m "rename alpha"
 
   notes obfuscate
 
@@ -393,6 +393,25 @@ EOF
 
   run git -C "$CALLER_PWD" commit -m "should succeed"
   [ "$status" -eq 0 ]
+}
+
+@test "pre-commit hook rejects staged renames from obfuscated to deobfuscated" {
+  notes setup
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q -m "setup"
+
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q -m "obfuscated"
+
+  # Deobfuscate locally, then stage the renames
+  notes deobfuscate
+  git -C "$CALLER_PWD" add -A
+
+  # The hook should reject this — deobfuscated names are staged
+  run git -C "$CALLER_PWD" commit -m "should fail"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"non-obfuscated filenames"* ]]
 }
 
 @test "pre-commit hook allows commits when no manifest exists" {
