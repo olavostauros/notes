@@ -38,14 +38,17 @@ for id in "${!id_to_name[@]}"; do
   fi
 done
 
+# Always install the hook when not in dry-run mode (even if already deobfuscated)
+if [ "${usage_dry_run:-}" != "true" ]; then
+  install_obfuscation_hook "${usage_dir:-notes}"
+fi
+
 if [ "$restored" -eq 0 ]; then
   echo "Nothing to deobfuscate."
   exit 0
 fi
 
 if [ "${usage_dry_run:-}" != "true" ]; then
-  # Install the obfuscation pre-commit hook to prevent accidental pushes
-  install_obfuscation_hook "${usage_dir:-notes}"
   echo ""
   echo "Restored $restored file(s). Manifest preserved for stable IDs."
 fi
