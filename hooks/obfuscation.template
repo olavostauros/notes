@@ -19,7 +19,7 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
     if [ -z "${valid_ids[$base]+x}" ]; then
       unobfuscated+=("$file")
     fi
-  done < <(git diff --cached --name-only --diff-filter=ACM)
+  done < <(git diff --cached --name-only --diff-filter=ACMR)
 
   if [ "${#unobfuscated[@]}" -gt 0 ]; then
     echo "ERROR: Staged notes have non-obfuscated filenames:" >&2
