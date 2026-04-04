@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Prevent accidentally committing deobfuscated filenames.
+# By default, auto-obfuscates and re-stages. Set NOTES_OBFUSCATE_HOOK=guard
+# to reject instead (the old behavior).
 set -eo pipefail
 
 NOTES_ROOT="__NOTES_DIR__"
+MODE="${NOTES_OBFUSCATE_HOOK:-auto}"
 
 if [ -f "$NOTES_ROOT/.manifest" ]; then
   declare -A valid_ids
@@ -22,10 +25,15 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
   done < <(git diff --cached --name-only --diff-filter=ACMR)
 
   if [ "${#unobfuscated[@]}" -gt 0 ]; then
-    echo "ERROR: Staged notes have non-obfuscated filenames:" >&2
-    printf '  %s\n' "${unobfuscated[@]}" >&2
-    echo "" >&2
-    echo "Run 'notes obfuscate' first, then re-stage." >&2
-    exit 1
+    if [ "$MODE" = "auto" ]; then
+      echo "Auto-obfuscating ${#unobfuscated[@]} file(s)..." >&2
+      notes obfuscate >&2
+    else
+      echo "ERROR: Staged notes have non-obfuscated filenames:" >&2
+      printf '  %s\n' "${unobfuscated[@]}" >&2
+      echo "" >&2
+      echo "Run 'notes obfuscate' first, then re-stage." >&2
+      exit 1
+    fi
   fi
 fi
