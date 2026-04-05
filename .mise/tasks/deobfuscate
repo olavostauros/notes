@@ -38,9 +38,10 @@ for id in "${!id_to_name[@]}"; do
   fi
 done
 
-# Always install the hook when not in dry-run mode (even if already deobfuscated)
+# Always install hooks when not in dry-run mode (even if already deobfuscated)
 if [ "${usage_dry_run:-}" != "true" ]; then
   install_obfuscation_hook "${usage_dir:-notes}"
+  install_deobfuscation_hook "${usage_dir:-notes}"
 fi
 
 if [ "$restored" -eq 0 ]; then

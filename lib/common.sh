@@ -68,3 +68,26 @@ install_obfuscation_hook() {
   sed "s|__NOTES_DIR__|$notes_dir|g" "$HOOKS_DIR/obfuscation.template" > "$target"
   chmod +x "$target"
 }
+
+# Ensure the post-commit dispatcher is installed.
+ensure_post_commit_dispatcher() {
+  local hooks_dir="$TARGET_DIR/.git/hooks"
+  local dispatcher="$hooks_dir/post-commit"
+
+  mkdir -p "$hooks_dir/post-commit.d"
+
+  if ! grep -q "post-commit.d" "$dispatcher" 2>/dev/null; then
+    cp "$HOOKS_DIR/post-commit-dispatcher" "$dispatcher"
+    chmod +x "$dispatcher"
+  fi
+}
+
+# Install the post-commit deobfuscation hook.
+# After a commit obfuscates filenames, this restores them for the working tree.
+install_deobfuscation_hook() {
+  local notes_dir="${1:-notes}"
+  ensure_post_commit_dispatcher
+  local target="$TARGET_DIR/.git/hooks/post-commit.d/deobfuscation"
+  sed "s|__NOTES_DIR__|$notes_dir|g" "$HOOKS_DIR/post-commit-deobfuscate.template" > "$target"
+  chmod +x "$target"
+}
