@@ -10,6 +10,11 @@ require_rudi
 cd "$TARGET_DIR"
 rudi unlock
 
+# Known limitation: rudi unlock decrypts ALL git-crypt-encrypted files,
+# not just notes. This also decrypts the modules manifest and anything
+# else using git-crypt in this repo. Tracked in KnickKnackLabs/rudi#5.
+echo "Note: unlock decrypts all encrypted files in this repo (rudi#5)."
+
 # Deobfuscate filenames if a manifest exists
 if [ -f "$TARGET_DIR/notes/.manifest" ]; then
   cd "$MISE_CONFIG_ROOT" && CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate
