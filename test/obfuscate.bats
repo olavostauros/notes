@@ -530,6 +530,27 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+# --- Bash 3.2 compatibility ---
+
+@test "obfuscate works without associative arrays (bash 3.2)" {
+  # Verify no declare -A in task scripts or hook templates
+  ! grep -q 'declare -A' "$MISE_CONFIG_ROOT/.mise/tasks/obfuscate"
+  ! grep -q 'declare -A' "$MISE_CONFIG_ROOT/.mise/tasks/deobfuscate"
+  ! grep -q 'declare -A' "$MISE_CONFIG_ROOT/hooks/obfuscation.template"
+  ! grep -q 'declare -A' "$MISE_CONFIG_ROOT/hooks/post-commit-deobfuscate.template"
+}
+
+@test "obfuscate succeeds with single file" {
+  # Minimal case — catches set -e failures in manifest lookups
+  rm "$CALLER_PWD/notes/beta.md" "$CALLER_PWD/notes/gamma.txt"
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q -m "remove extras"
+
+  run notes obfuscate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Obfuscated 1 file(s)"* ]]
+}
+
 @test "pre-commit hook allows commits when no manifest exists" {
   notes setup
   git -C "$CALLER_PWD" add -A

@@ -12,5 +12,5 @@ rudi unlock
 
 # Deobfuscate filenames if a manifest exists
 if [ -f "$TARGET_DIR/notes/.manifest" ]; then
-  CALLER_PWD="$TARGET_DIR" "$MISE_CONFIG_ROOT/.mise/tasks/deobfuscate"
+  cd "$MISE_CONFIG_ROOT" && CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate
 fi

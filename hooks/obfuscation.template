@@ -8,18 +8,13 @@ NOTES_ROOT="__NOTES_DIR__"
 MODE="${NOTES_OBFUSCATE_HOOK:-auto}"
 
 if [ -f "$NOTES_ROOT/.manifest" ]; then
-  declare -A valid_ids
-  while IFS=$'\t' read -r id name; do
-    [ -z "$id" ] && continue
-    valid_ids[$id]=1
-  done < "$NOTES_ROOT/.manifest"
-
   unobfuscated=()
   while IFS= read -r file; do
     [[ "$file" != "$NOTES_ROOT/"* ]] && continue
     base=$(basename "$file")
     [[ "$base" == ".manifest" ]] && continue
-    if [ -z "${valid_ids[$base]+x}" ]; then
+    # Check if basename is a known ID in the manifest
+    if ! grep -q "^${base}	" "$NOTES_ROOT/.manifest"; then
       unobfuscated+=("$file")
     fi
   done < <(git diff --cached --name-only --diff-filter=ACMR)

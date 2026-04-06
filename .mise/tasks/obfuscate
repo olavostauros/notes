@@ -13,15 +13,21 @@ if [ ! -d "$notes_dir" ]; then
   exit 1
 fi
 
-# Load existing manifest if present
-declare -A name_to_id id_to_name
-if [ -f "$manifest" ]; then
-  while IFS=$'\t' read -r id name; do
-    [ -z "$id" ] && continue
-    name_to_id[$name]="$id"
-    id_to_name[$id]="$name"
-  done < "$manifest"
-fi
+# Manifest helpers — grep-based lookups (bash 3.2 compatible, no declare -A)
+# Manifest format: <id>\t<name>
+
+# Look up id by name. Returns empty string if not found.
+manifest_id_for_name() {
+  [ ! -f "$manifest" ] && return
+  grep -F "	${1}" "$manifest" | while IFS=$'\t' read -r id name; do
+    [ "$name" = "$1" ] && printf '%s' "$id" && return
+  done
+}
+
+# Check if an id exists in the manifest.
+manifest_has_id() {
+  [ -f "$manifest" ] && grep -q "^${1}	" "$manifest"
+}
 
 # Find files that need obfuscating (recurse, flatten to notes root)
 to_rename=()
@@ -37,12 +43,13 @@ while IFS= read -r f; do
 
   # Skip files already obfuscated (basename is a known ID)
   base=$(basename "$f")
-  if [ -n "${id_to_name[$base]+x}" ]; then
+  if manifest_has_id "$base"; then
     continue
   fi
 
   # Rename files that already have an assigned ID (deobfuscated state)
-  if [ -n "${name_to_id[$relpath]+x}" ]; then
+  existing_id=$(manifest_id_for_name "$relpath" || true)
+  if [ -n "$existing_id" ]; then
     to_restore+=("$relpath")
     continue
   fi
@@ -55,9 +62,13 @@ if [ ${#to_rename[@]} -eq 0 ] && [ ${#to_restore[@]} -eq 0 ]; then
   exit 0
 fi
 
+# Track new manifest entries in a temp file (appended to existing manifest later)
+new_entries=$(mktemp)
+trap 'rm -f "$new_entries"' EXIT
+
 # Restore files to their known IDs
-for relpath in "${to_restore[@]}"; do
-  id="${name_to_id[$relpath]}"
+for relpath in ${to_restore[@]+"${to_restore[@]}"}; do
+  id=$(manifest_id_for_name "$relpath" || true)
   if [ "${usage_dry_run:-}" = "true" ]; then
     echo "  $relpath → $id"
   else
@@ -67,17 +78,16 @@ for relpath in "${to_restore[@]}"; do
 done
 
 # Generate IDs and rename new files (flatten into notes root)
-for relpath in "${to_rename[@]}"; do
+for relpath in ${to_rename[@]+"${to_rename[@]}"}; do
   # Generate a random 8-char hex ID
   id=$(openssl rand -hex 4)
 
-  # Ensure no collision
-  while [ -n "${id_to_name[$id]+x}" ] || [ -f "$notes_dir/$id" ]; do
+  # Ensure no collision with existing manifest or new entries
+  while manifest_has_id "$id" || grep -q "^${id}	" "$new_entries" 2>/dev/null || [ -f "$notes_dir/$id" ]; do
     id=$(openssl rand -hex 4)
   done
 
-  name_to_id[$relpath]="$id"
-  id_to_name[$id]="$relpath"
+  printf '%s\t%s\n' "$id" "$relpath" >> "$new_entries"
 
   if [ "${usage_dry_run:-}" = "true" ]; then
     echo "  $relpath → $id"
@@ -92,29 +102,25 @@ if [ "${usage_dry_run:-}" != "true" ]; then
   find "$notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
 fi
 
-# Clean up stale manifest entries (files that no longer exist)
+# Write manifest: merge existing (minus stale) + new entries, sorted by name
 if [ "${usage_dry_run:-}" != "true" ]; then
-  stale=()
-  for name in "${!name_to_id[@]}"; do
-    id="${name_to_id[$name]}"
-    if [ ! -f "$notes_dir/$id" ]; then
-      stale+=("$name")
-    fi
-  done
-  for name in "${stale[@]}"; do
-    id="${name_to_id[$name]}"
-    unset "name_to_id[$name]"
-    unset "id_to_name[$id]"
-  done
-fi
+  merged=$(mktemp)
 
-# Write manifest (sorted by name for stability)
-if [ "${usage_dry_run:-}" != "true" ]; then
-  {
-    for name in $(printf '%s\n' "${!name_to_id[@]}" | sort); do
-      printf '%s\t%s\n' "${name_to_id[$name]}" "$name"
-    done
-  } > "$manifest"
+  # Copy existing entries, dropping stale ones (files that no longer exist)
+  if [ -f "$manifest" ]; then
+    while IFS=$'\t' read -r id name; do
+      [ -z "$id" ] && continue
+      [ -f "$notes_dir/$id" ] && printf '%s\t%s\n' "$id" "$name"
+    done < "$manifest" > "$merged"
+  fi
+
+  # Append new entries
+  cat "$new_entries" >> "$merged"
+
+  # Sort by name (field 2) for stability
+  sort -t$'\t' -k2 "$merged" > "$manifest"
+  rm -f "$merged"
+
   echo ""
   echo "Manifest written: $manifest"
   echo "Obfuscated ${#to_rename[@]} file(s)."

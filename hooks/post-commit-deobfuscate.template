@@ -8,18 +8,13 @@ NOTES_ROOT="__NOTES_DIR__"
 
 if [ -f "$NOTES_ROOT/.manifest" ]; then
   # Only deobfuscate if files are currently obfuscated
-  declare -A valid_ids
-  while IFS=$'\t' read -r id name; do
-    [ -z "$id" ] && continue
-    valid_ids[$id]=1
-  done < "$NOTES_ROOT/.manifest"
-
   obfuscated=0
   for f in "$NOTES_ROOT/"*; do
     [ ! -f "$f" ] && continue
     base=$(basename "$f")
     [[ "$base" == ".manifest" ]] && continue
-    if [ -n "${valid_ids[$base]+x}" ]; then
+    # Check if basename is a known ID in the manifest
+    if grep -q "^${base}	" "$NOTES_ROOT/.manifest"; then
       obfuscated=1
       break
     fi

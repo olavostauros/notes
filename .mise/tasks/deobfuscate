@@ -13,17 +13,10 @@ if [ ! -f "$manifest" ]; then
   exit 1
 fi
 
-# Load manifest
-declare -A id_to_name
-while IFS=$'\t' read -r id name; do
-  [ -z "$id" ] && continue
-  id_to_name[$id]="$name"
-done < "$manifest"
-
-# Find obfuscated files to restore
+# Find obfuscated files to restore (bash 3.2 compatible, no declare -A)
 restored=0
-for id in "${!id_to_name[@]}"; do
-  relpath="${id_to_name[$id]}"
+while IFS=$'\t' read -r id relpath; do
+  [ -z "$id" ] && continue
   if [ -f "$notes_dir/$id" ]; then
     if [ "${usage_dry_run:-}" = "true" ]; then
       echo "  $id → $relpath"
@@ -36,7 +29,7 @@ for id in "${!id_to_name[@]}"; do
     fi
     ((restored++)) || true
   fi
-done
+done < "$manifest"
 
 # Always install hooks when not in dry-run mode (even if already deobfuscated).
 # Skip when called from the post-commit hook itself (avoids circular reinstallation).
