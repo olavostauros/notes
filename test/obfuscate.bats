@@ -317,7 +317,7 @@ setup() {
   notes deobfuscate
 
   [ -x "$CALLER_PWD/.git/hooks/pre-commit" ]
-  grep -q "pre-commit.d" "$CALLER_PWD/.git/hooks/pre-commit"
+  grep -q "Generic hook dispatcher" "$CALLER_PWD/.git/hooks/pre-commit"
   [ -x "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation" ]
   grep -q "manifest" "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation"
 }
@@ -431,14 +431,103 @@ EOF
   run git -C "$CALLER_PWD" commit -m "should succeed"
   [ "$status" -eq 0 ]
 
-  # All files should be obfuscated on disk
-  [ ! -f "$CALLER_PWD/notes/alpha.md" ]
-  [ ! -f "$CALLER_PWD/notes/beta.md" ]
-  [ ! -f "$CALLER_PWD/notes/sneaky.md" ]
+  # The committed tree should have obfuscated filenames
+  # (post-commit hook deobfuscates the working tree, so check git not disk)
+  local committed_files
+  committed_files=$(git -C "$CALLER_PWD" show --name-only --format='' HEAD -- notes/)
+  ! echo "$committed_files" | grep -q "alpha.md"
+  ! echo "$committed_files" | grep -q "sneaky.md"
 
   # Manifest should have all entries
   grep -q "sneaky.md" "$CALLER_PWD/notes/.manifest"
   grep -q "alpha.md" "$CALLER_PWD/notes/.manifest"
+}
+
+# --- Post-commit hook ---
+
+@test "deobfuscate installs post-commit deobfuscation hook" {
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscate"
+
+  notes deobfuscate
+
+  [ -x "$CALLER_PWD/.git/hooks/post-commit" ]
+  grep -q "Generic hook dispatcher" "$CALLER_PWD/.git/hooks/post-commit"
+  [ -x "$CALLER_PWD/.git/hooks/post-commit.d/deobfuscation" ]
+  grep -q "manifest" "$CALLER_PWD/.git/hooks/post-commit.d/deobfuscation"
+}
+
+@test "deobfuscate dry-run does not install post-commit hook" {
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscate"
+
+  notes deobfuscate -- --dry-run
+
+  [ ! -d "$CALLER_PWD/.git/hooks/post-commit.d" ]
+}
+
+@test "post-commit hook deobfuscates working tree after commit" {
+  # Obfuscate and commit initial state
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
+
+  # Deobfuscate (installs both pre-commit and post-commit hooks)
+  notes deobfuscate
+
+  # Add a new file and commit — hooks should handle the round-trip
+  echo -e "---\ntitle: New Note\n---\n# New" > "$CALLER_PWD/notes/new-note.md"
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -m "add new note"
+
+  # Working tree should have readable filenames (post-commit deobfuscated)
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+  [ -f "$CALLER_PWD/notes/beta.md" ]
+  [ -f "$CALLER_PWD/notes/gamma.txt" ]
+  [ -f "$CALLER_PWD/notes/new-note.md" ]
+
+  # Committed tree should have obfuscated filenames
+  local committed_files
+  committed_files=$(git -C "$CALLER_PWD" show --name-only --format='' HEAD -- notes/)
+  ! echo "$committed_files" | grep -q "alpha.md"
+  ! echo "$committed_files" | grep -q "new-note.md"
+}
+
+@test "post-commit hook preserves file content after round-trip" {
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
+
+  notes deobfuscate
+
+  echo -e "---\ntitle: Fresh\n---\n# Fresh content" > "$CALLER_PWD/notes/fresh.md"
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -m "add fresh"
+
+  # Content should survive the obfuscate→deobfuscate round-trip
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
+  [[ "$(cat "$CALLER_PWD/notes/fresh.md")" == *"# Fresh content"* ]]
+}
+
+@test "post-commit hook is no-op when files are not obfuscated" {
+  # No manifest — post-commit hook should do nothing
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
+  notes deobfuscate
+
+  # Remove manifest to simulate no-obfuscation repo
+  rm "$CALLER_PWD/notes/.manifest"
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "remove manifest"
+
+  # New commit shouldn't fail even though post-commit hook exists
+  echo "change" >> "$CALLER_PWD/notes/alpha.md"
+  git -C "$CALLER_PWD" add -A
+  run git -C "$CALLER_PWD" commit -m "should work fine"
+  [ "$status" -eq 0 ]
 }
 
 @test "pre-commit hook allows commits when no manifest exists" {

@@ -36,16 +36,17 @@ require_initialized() {
 
 # ── Hook installation ─────────────────────────────────────────
 
-# Ensure the pre-commit dispatcher is installed.
-# Individual checks live in .git/hooks/pre-commit.d/ as separate scripts.
+# Ensure a hook dispatcher is installed for the given hook type.
+# Usage: ensure_hook_dispatcher <pre-commit|post-commit>
 ensure_hook_dispatcher() {
+  local hook_type="${1:?usage: ensure_hook_dispatcher <pre-commit|post-commit>}"
   local hooks_dir="$TARGET_DIR/.git/hooks"
-  local dispatcher="$hooks_dir/pre-commit"
+  local dispatcher="$hooks_dir/$hook_type"
 
-  mkdir -p "$hooks_dir/pre-commit.d"
+  mkdir -p "$hooks_dir/${hook_type}.d"
 
   # Only install if the dispatcher isn't already in place
-  if ! grep -q "pre-commit.d" "$dispatcher" 2>/dev/null; then
+  if ! grep -q "${hook_type}.d" "$dispatcher" 2>/dev/null; then
     cp "$HOOKS_DIR/dispatcher" "$dispatcher"
     chmod +x "$dispatcher"
   fi
@@ -53,7 +54,7 @@ ensure_hook_dispatcher() {
 
 # Install the encryption pre-commit check.
 install_encryption_hook() {
-  ensure_hook_dispatcher
+  ensure_hook_dispatcher pre-commit
   local target="$TARGET_DIR/.git/hooks/pre-commit.d/encryption"
   cp "$HOOKS_DIR/encryption" "$target"
   chmod +x "$target"
@@ -63,8 +64,18 @@ install_encryption_hook() {
 # Bakes in the notes directory path from the template.
 install_obfuscation_hook() {
   local notes_dir="${1:-notes}"
-  ensure_hook_dispatcher
+  ensure_hook_dispatcher pre-commit
   local target="$TARGET_DIR/.git/hooks/pre-commit.d/obfuscation"
   sed "s|__NOTES_DIR__|$notes_dir|g" "$HOOKS_DIR/obfuscation.template" > "$target"
+  chmod +x "$target"
+}
+
+# Install the post-commit deobfuscation hook.
+# After a commit obfuscates filenames, this restores them for the working tree.
+install_deobfuscation_hook() {
+  local notes_dir="${1:-notes}"
+  ensure_hook_dispatcher post-commit
+  local target="$TARGET_DIR/.git/hooks/post-commit.d/deobfuscation"
+  sed "s|__NOTES_DIR__|$notes_dir|g" "$HOOKS_DIR/post-commit-deobfuscate.template" > "$target"
   chmod +x "$target"
 }

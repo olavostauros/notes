@@ -58,7 +58,7 @@ load test_helper
 
   # Dispatcher
   [ -x "$TARGET_DIR/.git/hooks/pre-commit" ]
-  grep -q "pre-commit.d" "$TARGET_DIR/.git/hooks/pre-commit"
+  grep -q "Generic hook dispatcher" "$TARGET_DIR/.git/hooks/pre-commit"
 
   # Individual hooks
   [ -x "$TARGET_DIR/.git/hooks/pre-commit.d/encryption" ]

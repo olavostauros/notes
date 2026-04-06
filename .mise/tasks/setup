@@ -69,10 +69,11 @@ else
   echo "  .gitattributes already has git-crypt patterns, skipping"
 fi
 
-# --- Install pre-commit hooks ---
+# --- Install hooks ---
 install_encryption_hook
 install_obfuscation_hook "${usage_dir:-notes}"
-echo "  Installed pre-commit hooks"
+install_deobfuscation_hook "${usage_dir:-notes}"
+echo "  Installed hooks"
 
 echo ""
 echo "Done! Next steps:"
