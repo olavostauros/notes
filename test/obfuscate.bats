@@ -317,7 +317,7 @@ setup() {
   notes deobfuscate
 
   [ -x "$CALLER_PWD/.git/hooks/pre-commit" ]
-  grep -q "pre-commit.d" "$CALLER_PWD/.git/hooks/pre-commit"
+  grep -q "Generic hook dispatcher" "$CALLER_PWD/.git/hooks/pre-commit"
   [ -x "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation" ]
   grep -q "manifest" "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation"
 }
@@ -453,7 +453,7 @@ EOF
   notes deobfuscate
 
   [ -x "$CALLER_PWD/.git/hooks/post-commit" ]
-  grep -q "post-commit.d" "$CALLER_PWD/.git/hooks/post-commit"
+  grep -q "Generic hook dispatcher" "$CALLER_PWD/.git/hooks/post-commit"
   [ -x "$CALLER_PWD/.git/hooks/post-commit.d/deobfuscation" ]
   grep -q "manifest" "$CALLER_PWD/.git/hooks/post-commit.d/deobfuscation"
 }

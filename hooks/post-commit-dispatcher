@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-# Post-commit dispatcher — runs all executable scripts in post-commit.d/
-set -eo pipefail
-HOOK_DIR="$(dirname "$0")/post-commit.d"
-for hook in "$HOOK_DIR"/*; do
-  [ -x "$hook" ] && "$hook" || exit $?
-done

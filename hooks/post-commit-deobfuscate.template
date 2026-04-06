@@ -26,6 +26,6 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
   done
 
   if [ "$obfuscated" -eq 1 ]; then
-    notes deobfuscate >/dev/null 2>&1 || true
+    NOTES_HOOK_CONTEXT=1 notes deobfuscate >/dev/null 2>&1 || true
   fi
 fi

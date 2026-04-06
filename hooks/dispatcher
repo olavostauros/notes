@@ -1,7 +1,20 @@
 #!/usr/bin/env bash
-# Pre-commit dispatcher — runs all executable scripts in pre-commit.d/
+# Generic hook dispatcher — runs all executable scripts in <hook-name>.d/
+# Used for both pre-commit and post-commit hooks.
+# Pre-commit: exits on first failure (blocks the commit).
+# Post-commit: continues on failure (commit is already done).
 set -eo pipefail
-HOOK_DIR="$(dirname "$0")/pre-commit.d"
+
+HOOK_NAME="$(basename "$0")"
+HOOK_DIR="$(dirname "$0")/${HOOK_NAME}.d"
+
+shopt -s nullglob
 for hook in "$HOOK_DIR"/*; do
-  [ -x "$hook" ] && "$hook" || exit $?
+  if [ -x "$hook" ]; then
+    if [[ "$HOOK_NAME" == pre-* ]]; then
+      "$hook" || exit $?
+    else
+      "$hook" || echo "${HOOK_NAME} hook failed: $hook" >&2
+    fi
+  fi
 done
