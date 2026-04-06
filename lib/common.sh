@@ -39,7 +39,7 @@ require_initialized() {
 # Ensure a hook dispatcher is installed for the given hook type.
 # Usage: ensure_hook_dispatcher <pre-commit|post-commit|post-merge>
 ensure_hook_dispatcher() {
-  local hook_type="${1:?usage: ensure_hook_dispatcher <pre-commit|post-commit>}"
+  local hook_type="${1:?usage: ensure_hook_dispatcher <pre-commit|post-commit|post-merge>}"
   local hooks_dir="$TARGET_DIR/.git/hooks"
   local dispatcher="$hooks_dir/$hook_type"
 

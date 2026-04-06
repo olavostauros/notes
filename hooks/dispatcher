@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Generic hook dispatcher — runs all executable scripts in <hook-name>.d/
-# Used for both pre-commit and post-commit hooks.
+# Used for pre-commit, post-commit, and post-merge hooks.
 # Pre-commit: exits on first failure (blocks the commit).
 # Post-commit: continues on failure (commit is already done).
 set -eo pipefail
