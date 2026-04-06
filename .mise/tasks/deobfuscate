@@ -2,6 +2,7 @@
 #MISE description="Restore obfuscated filenames to their original names"
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--dry-run" help="Show what would be renamed without doing it"
+#USAGE flag "--no-stage" help="Use plain mv instead of git mv (working tree only, no staging)"
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -24,7 +25,11 @@ while IFS=$'\t' read -r id relpath; do
       # Recreate subdirectory if needed
       target_dir=$(dirname "$notes_dir/$relpath")
       [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
-      git -C "$TARGET_DIR" mv "$notes_dir/$id" "$notes_dir/$relpath"
+      if [ "${usage_no_stage:-}" = "true" ]; then
+        mv "$notes_dir/$id" "$notes_dir/$relpath"
+      else
+        git -C "$TARGET_DIR" mv "$notes_dir/$id" "$notes_dir/$relpath"
+      fi
       echo "  $id → $relpath"
     fi
     ((restored++)) || true

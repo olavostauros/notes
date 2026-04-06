@@ -37,7 +37,7 @@ require_initialized() {
 # ── Hook installation ─────────────────────────────────────────
 
 # Ensure a hook dispatcher is installed for the given hook type.
-# Usage: ensure_hook_dispatcher <pre-commit|post-commit>
+# Usage: ensure_hook_dispatcher <pre-commit|post-commit|post-merge>
 ensure_hook_dispatcher() {
   local hook_type="${1:?usage: ensure_hook_dispatcher <pre-commit|post-commit>}"
   local hooks_dir="$TARGET_DIR/.git/hooks"
@@ -74,8 +74,17 @@ install_obfuscation_hook() {
 # After a commit obfuscates filenames, this restores them for the working tree.
 install_deobfuscation_hook() {
   local notes_dir="${1:-notes}"
+  local template="$HOOKS_DIR/post-commit-deobfuscate.template"
+
+  # Install for post-commit (deobfuscate after committing)
   ensure_hook_dispatcher post-commit
   local target="$TARGET_DIR/.git/hooks/post-commit.d/deobfuscation"
-  sed "s|__NOTES_DIR__|$notes_dir|g" "$HOOKS_DIR/post-commit-deobfuscate.template" > "$target"
+  sed "s|__NOTES_DIR__|$notes_dir|g" "$template" > "$target"
   chmod +x "$target"
+
+  # Install for post-merge (deobfuscate after pulling)
+  ensure_hook_dispatcher post-merge
+  local merge_target="$TARGET_DIR/.git/hooks/post-merge.d/deobfuscation"
+  sed "s|__NOTES_DIR__|$notes_dir|g" "$template" > "$merge_target"
+  chmod +x "$merge_target"
 }
