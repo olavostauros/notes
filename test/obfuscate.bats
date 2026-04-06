@@ -563,3 +563,107 @@ EOF
   run git -C "$CALLER_PWD" commit -m "should succeed"
   [ "$status" -eq 0 ]
 }
+
+# --- deobfuscate --no-stage ---
+
+@test "deobfuscate --no-stage restores names without staging" {
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
+
+  notes deobfuscate -- --no-stage
+
+  # Working tree has readable names
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+  [ -f "$CALLER_PWD/notes/beta.md" ]
+
+  # Index is clean (no staged changes)
+  local staged
+  staged=$(git -C "$CALLER_PWD" diff --cached --name-status)
+  [ -z "$staged" ]
+}
+
+@test "deobfuscate --no-stage preserves content" {
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
+
+  notes deobfuscate -- --no-stage
+
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
+  [[ "$(cat "$CALLER_PWD/notes/beta.md")" == *"# Beta"* ]]
+}
+
+@test "obfuscate works when working tree is deobfuscated but index has obfuscated names" {
+  # This is the state after deobfuscate --no-stage
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
+  notes deobfuscate -- --no-stage
+
+  # Now obfuscate should restore obfuscated names and stage them
+  run notes obfuscate
+  [ "$status" -eq 0 ]
+
+  # All files should be obfuscated on disk
+  [ ! -f "$CALLER_PWD/notes/alpha.md" ]
+  [ ! -f "$CALLER_PWD/notes/beta.md" ]
+
+  # Manifest entries should use the same IDs (stable)
+  local id_alpha id_beta
+  id_alpha=$(grep 'alpha.md' "$CALLER_PWD/notes/.manifest" | cut -f1)
+  id_beta=$(grep 'beta.md' "$CALLER_PWD/notes/.manifest" | cut -f1)
+  [ -f "$CALLER_PWD/notes/$id_alpha" ]
+  [ -f "$CALLER_PWD/notes/$id_beta" ]
+}
+
+@test "full commit cycle: deobfuscated working tree stays clean" {
+  # Set up obfuscated repo with hooks
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
+  notes deobfuscate  # installs hooks
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "deobfuscated"
+
+  # Now simulate the --no-stage workflow
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "re-obfuscated"
+  notes deobfuscate -- --no-stage
+
+  # Edit a file and commit via hooks
+  echo "edited" >> "$CALLER_PWD/notes/alpha.md"
+  git -C "$CALLER_PWD" add notes/alpha.md
+  run git -C "$CALLER_PWD" commit -m "edit alpha"
+  [ "$status" -eq 0 ]
+
+  # Committed tree should have obfuscated names
+  local committed_files
+  committed_files=$(git -C "$CALLER_PWD" show --name-only --format='' HEAD -- notes/)
+  ! echo "$committed_files" | grep -q "alpha.md"
+
+  # Working tree should have readable names (post-commit deobfuscated)
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"edited"* ]]
+
+  # Index should be clean
+  local staged
+  staged=$(git -C "$CALLER_PWD" diff --cached --name-status)
+  [ -z "$staged" ]
+}
+
+# --- Post-merge hook ---
+
+@test "deobfuscate installs post-merge deobfuscation hook" {
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscate"
+
+  notes deobfuscate
+
+  [ -x "$CALLER_PWD/.git/hooks/post-merge" ]
+  grep -q "Generic hook dispatcher" "$CALLER_PWD/.git/hooks/post-merge"
+  [ -x "$CALLER_PWD/.git/hooks/post-merge.d/deobfuscation" ]
+  grep -q "no-stage" "$CALLER_PWD/.git/hooks/post-merge.d/deobfuscation"
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # After commit, restore obfuscated filenames to readable names locally.
-# The pre-commit hook obfuscates files (via git mv) so they're committed
-# with hashed names. This hook reverses that so the working tree stays usable.
+# Uses --no-stage so the index stays clean (matching HEAD's obfuscated names)
+# while the working tree has readable names for humans.
 set -eo pipefail
 
 NOTES_ROOT="__NOTES_DIR__"
@@ -21,6 +21,6 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
   done
 
   if [ "$obfuscated" -eq 1 ]; then
-    NOTES_HOOK_CONTEXT=1 notes deobfuscate >/dev/null 2>&1 || true
+    NOTES_HOOK_CONTEXT=1 notes deobfuscate --no-stage >/dev/null 2>&1 || true
   fi
 fi

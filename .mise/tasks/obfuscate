@@ -72,7 +72,10 @@ for relpath in ${to_restore[@]+"${to_restore[@]}"}; do
   if [ "${usage_dry_run:-}" = "true" ]; then
     echo "  $relpath → $id"
   else
-    git -C "$TARGET_DIR" mv "$notes_dir/$relpath" "$notes_dir/$id"
+    mv "$notes_dir/$relpath" "$notes_dir/$id"
+    git -C "$TARGET_DIR" add "$notes_dir/$id"
+    # Remove the deobfuscated name from the index if it was staged
+    git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$relpath" 2>/dev/null || true
     echo "  $relpath → $id"
   fi
 done
@@ -92,7 +95,10 @@ for relpath in ${to_rename[@]+"${to_rename[@]}"}; do
   if [ "${usage_dry_run:-}" = "true" ]; then
     echo "  $relpath → $id"
   else
-    git -C "$TARGET_DIR" mv "$notes_dir/$relpath" "$notes_dir/$id"
+    mv "$notes_dir/$relpath" "$notes_dir/$id"
+    git -C "$TARGET_DIR" add "$notes_dir/$id"
+    # Remove the deobfuscated name from the index if it was staged
+    git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$relpath" 2>/dev/null || true
     echo "  $relpath → $id"
   fi
 done
@@ -120,6 +126,9 @@ if [ "${usage_dry_run:-}" != "true" ]; then
   # Sort by name (field 2) for stability
   sort -t$'\t' -k2 "$merged" > "$manifest"
   rm -f "$merged"
+
+  # Stage manifest so it's included in the commit
+  git -C "$TARGET_DIR" add "$manifest"
 
   echo ""
   echo "Manifest written: $manifest"
