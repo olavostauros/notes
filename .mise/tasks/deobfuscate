@@ -45,7 +45,9 @@ deobfuscate_one() {
 # Find obfuscated files to restore (bash 3.2 compatible, no declare -A)
 restored=0
 
-# Parse variadic args safely (mise wraps multi-word args in quotes)
+# Parse variadic args safely (mise wraps multi-word args in single quotes).
+# xargs respects shell quoting so spaces in filenames work correctly.
+# Limitation: backslashes in filenames are treated as escape characters by xargs.
 ARGS=()
 if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
