@@ -5,34 +5,15 @@
 #USAGE arg "[files]..." help="Specific files to obfuscate (relative to notes dir). Omit for all."
 set -eo pipefail
 
-TARGET_DIR="${CALLER_PWD:-.}"
-notes_dir="$TARGET_DIR/${usage_dir:-notes}"
-manifest="$notes_dir/.manifest"
+source "$MISE_CONFIG_ROOT/lib/common.sh"
+notes_dir="${usage_dir:-notes}"
+abs_notes_dir="$TARGET_DIR/$notes_dir"
+manifest="$abs_notes_dir/.manifest"
 
-if [ ! -d "$notes_dir" ]; then
-  echo "Error: notes directory not found: $notes_dir" >&2
+if [ ! -d "$abs_notes_dir" ]; then
+  echo "Error: notes directory not found: $abs_notes_dir" >&2
   exit 1
 fi
-
-# Manifest helpers — grep-based lookups (bash 3.2 compatible, no declare -A)
-# Manifest format: <id>\t<name>
-
-# Look up id by name. Returns empty string if not found.
-manifest_id_for_name() {
-  [ ! -f "$manifest" ] && return
-  grep -F "	${1}" "$manifest" | while IFS=$'\t' read -r id name; do
-    [ "$name" = "$1" ] && printf '%s' "$id" && return
-  done
-}
-
-# Check if an id exists in the manifest.
-manifest_has_id() {
-  [ -f "$manifest" ] && grep -q "^${1}	" "$manifest"
-}
-
-# Find files that need obfuscating
-to_rename=()
-to_restore=()
 
 # Parse variadic args safely (mise wraps multi-word args in single quotes).
 # xargs respects shell quoting so spaces in filenames work correctly.
@@ -40,137 +21,72 @@ to_restore=()
 ARGS=()
 if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
+    # Strip notes_dir prefix if provided (e.g. "notes/alpha.md" → "alpha.md")
+    arg="${arg#"${notes_dir}/"}"
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
 fi
 
-if [ ${#ARGS[@]} -gt 0 ]; then
-  # Scoped mode: only process the specified files
-  for relpath in "${ARGS[@]}"; do
-    # Strip notes_dir prefix if provided (e.g. "notes/alpha.md" → "alpha.md")
-    relpath="${relpath#"${usage_dir:-notes}/"}"
-
-    [[ "$relpath" == ".manifest" ]] && continue
-    [ ! -f "$notes_dir/$relpath" ] && continue
-
-    base=$(basename "$relpath")
-    if manifest_has_id "$base"; then
-      continue
-    fi
-
-    existing_id=$(manifest_id_for_name "$relpath" || true)
-    if [ -n "$existing_id" ]; then
-      to_restore+=("$relpath")
-      continue
-    fi
-
-    to_rename+=("$relpath")
-  done
-else
-  # Full mode: scan all files in notes dir
-  while IFS= read -r f; do
-    [ ! -f "$f" ] && continue
-
-    relpath="${f#"$notes_dir"/}"
-
-    [[ "$relpath" == ".manifest" ]] && continue
-
-    base=$(basename "$f")
-    if manifest_has_id "$base"; then
-      continue
-    fi
-
-    existing_id=$(manifest_id_for_name "$relpath" || true)
-    if [ -n "$existing_id" ]; then
-      to_restore+=("$relpath")
-      continue
-    fi
-
-    to_rename+=("$relpath")
-  done < <(find "$notes_dir" -type f | sort)
-fi
-
-if [ ${#to_rename[@]} -eq 0 ] && [ ${#to_restore[@]} -eq 0 ]; then
-  echo "Nothing to obfuscate."
+if [ "${usage_dry_run:-}" = "true" ]; then
+  # Dry-run: show what would be renamed without doing it.
+  # Use the same classification logic as rename_to_obfuscated.
+  if [ ${#ARGS[@]} -gt 0 ]; then
+    for relpath in "${ARGS[@]}"; do
+      [[ "$relpath" == ".manifest" ]] && continue
+      [ ! -f "$abs_notes_dir/$relpath" ] && continue
+      base=$(basename "$relpath")
+      manifest_has_id "$manifest" "$base" && continue
+      echo "  $relpath → (will be assigned)"
+    done
+  else
+    while IFS= read -r f; do
+      [ ! -f "$f" ] && continue
+      relpath="${f#"$abs_notes_dir"/}"
+      [[ "$relpath" == ".manifest" ]] && continue
+      base=$(basename "$f")
+      manifest_has_id "$manifest" "$base" && continue
+      existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
+      if [ -n "$existing_id" ]; then
+        echo "  $relpath → $existing_id"
+      else
+        echo "  $relpath → (will be assigned)"
+      fi
+    done < <(find "$abs_notes_dir" -type f | sort)
+  fi
   exit 0
 fi
 
-# Track new manifest entries in a temp file (appended to existing manifest later)
-new_entries=$(mktemp)
-trap 'rm -f "$new_entries"' EXIT
-
-# Restore files to their known IDs
-for relpath in ${to_restore[@]+"${to_restore[@]}"}; do
-  id=$(manifest_id_for_name "$relpath" || true)
-  if [ "${usage_dry_run:-}" = "true" ]; then
-    echo "  $relpath → $id"
-  else
-    mv "$notes_dir/$relpath" "$notes_dir/$id"
-    git -C "$TARGET_DIR" add "$notes_dir/$id"
-    # Remove the deobfuscated name from the index if it was staged
-    git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$relpath" 2>/dev/null || true
-    echo "  $relpath → $id"
-  fi
-done
-
-# Generate IDs and rename new files (flatten into notes root)
-for relpath in ${to_rename[@]+"${to_rename[@]}"}; do
-  # Generate a random 8-char hex ID
-  id=$(openssl rand -hex 4)
-
-  # Ensure no collision with existing manifest or new entries
-  while manifest_has_id "$id" || grep -q "^${id}	" "$new_entries" 2>/dev/null || [ -f "$notes_dir/$id" ]; do
-    id=$(openssl rand -hex 4)
+# Clear status suppression so git sees the real state for staging.
+# In scoped mode, we need to find the IDs for files being re-obfuscated.
+if [ ${#ARGS[@]} -gt 0 ]; then
+  scoped_ids=()
+  for relpath in "${ARGS[@]}"; do
+    id=$(manifest_id_for_name "$manifest" "$relpath" || true)
+    [ -n "$id" ] && scoped_ids+=("$id")
   done
-
-  printf '%s\t%s\n' "$id" "$relpath" >> "$new_entries"
-
-  if [ "${usage_dry_run:-}" = "true" ]; then
-    echo "  $relpath → $id"
-  else
-    mv "$notes_dir/$relpath" "$notes_dir/$id"
-    git -C "$TARGET_DIR" add "$notes_dir/$id"
-    # Remove the deobfuscated name from the index if it was staged
-    git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$relpath" 2>/dev/null || true
-    echo "  $relpath → $id"
-  fi
-done
-
-# Clean up empty directories after flattening
-if [ "${usage_dry_run:-}" != "true" ]; then
-  find "$notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+  [ ${#scoped_ids[@]} -gt 0 ] && clear_status_suppression "$notes_dir" "${scoped_ids[@]}"
+else
+  clear_status_suppression "$notes_dir"
 fi
 
-# Write manifest: merge existing (minus stale) + new entries, sorted by name
-if [ "${usage_dry_run:-}" != "true" ]; then
-  merged=$(mktemp)
+# Perform the rename via Layer 1
+output=$(rename_to_obfuscated "$abs_notes_dir" "${ARGS[@]}") || {
+  echo "Nothing to obfuscate."
+  exit 0
+}
 
-  # Copy existing entries, dropping stale ones (files that no longer exist).
-  # An entry is live if *either* its obfuscated id or its readable name is on
-  # disk — this is correct for fully-obfuscated, fully-deobfuscated, and mixed
-  # working trees. In particular, scoped obfuscate (called by the pre-commit
-  # hook for a single file) must not drop entries for unrelated files that are
-  # currently deobfuscated on disk.
-  if [ -f "$manifest" ]; then
-    while IFS=$'\t' read -r id name; do
-      [ -z "$id" ] && continue
-      if [ -f "$notes_dir/$id" ] || [ -f "$notes_dir/$name" ]; then
-        printf '%s\t%s\n' "$id" "$name"
-      fi
-    done < "$manifest" > "$merged"
-  fi
+# Stage the results: add obfuscated files, remove readable names from index
+new_count=0
+while IFS=$'\t' read -r relpath id; do
+  git -C "$TARGET_DIR" add "$notes_dir/$id"
+  git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$relpath" 2>/dev/null || true
+  echo "  $relpath → $id"
+  ((new_count++)) || true
+done <<< "$output"
 
-  # Append new entries
-  cat "$new_entries" >> "$merged"
+# Stage manifest
+git -C "$TARGET_DIR" add "$manifest"
 
-  # Sort by name (field 2) for stability
-  sort -t$'\t' -k2 "$merged" > "$manifest"
-  rm -f "$merged"
-
-  # Stage manifest so it's included in the commit
-  git -C "$TARGET_DIR" add "$manifest"
-
-  echo ""
-  echo "Manifest written: $manifest"
-  echo "Obfuscated ${#to_rename[@]} file(s)."
-fi
+echo ""
+echo "Manifest written: $manifest"
+echo "Obfuscated $new_count file(s)."

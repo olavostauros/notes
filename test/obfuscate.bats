@@ -110,8 +110,8 @@ setup() {
 @test "scoped obfuscate from deobfuscated state preserves manifest entries" {
   notes obfuscate
   [ "$(wc -l < "$CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 3 ]
-  beta_id=$(grep -P '\tbeta\.md$' "$CALLER_PWD/notes/.manifest" | cut -f1)
-  gamma_id=$(grep -P '\tgamma\.txt$' "$CALLER_PWD/notes/.manifest" | cut -f1)
+  beta_id=$(grep $'\tbeta\.md$' "$CALLER_PWD/notes/.manifest" | cut -f1)
+  gamma_id=$(grep $'\tgamma\.txt$' "$CALLER_PWD/notes/.manifest" | cut -f1)
 
   # Drop to deobfuscated state — all files at readable names, none at IDs.
   notes deobfuscate
@@ -136,7 +136,7 @@ setup() {
 @test "full obfuscate from fully-deobfuscated state preserves manifest entries" {
   notes obfuscate
   [ "$(wc -l < "$CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 3 ]
-  alpha_id=$(grep -P '\talpha\.md$' "$CALLER_PWD/notes/.manifest" | cut -f1)
+  alpha_id=$(grep $'\talpha\.md$' "$CALLER_PWD/notes/.manifest" | cut -f1)
 
   notes deobfuscate
   # Full obfuscate with no args — should find all three readable files and
@@ -155,8 +155,7 @@ setup() {
 
   # Delete a file while deobfuscated
   notes deobfuscate
-  git -C "$CALLER_PWD" rm "$CALLER_PWD/notes/alpha.md"
-  git -C "$CALLER_PWD" commit -q -m "delete alpha"
+  rm "$CALLER_PWD/notes/alpha.md"
 
   notes obfuscate
 
@@ -170,8 +169,7 @@ setup() {
   alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
 
   notes deobfuscate
-  git -C "$CALLER_PWD" mv "$CALLER_PWD/notes/alpha.md" "$CALLER_PWD/notes/alpha-v2.md"
-  git -C "$CALLER_PWD" commit -q --no-verify -m "rename alpha"
+  mv "$CALLER_PWD/notes/alpha.md" "$CALLER_PWD/notes/alpha-v2.md"
 
   notes obfuscate
 
@@ -358,17 +356,23 @@ setup() {
 
 # --- Hook installation ---
 
-@test "deobfuscate installs obfuscation pre-commit hook" {
+@test "install-hooks installs obfuscation pre-commit hook" {
+  notes install-hooks
+
+  [ -x "$CALLER_PWD/.git/hooks/pre-commit" ]
+  grep -q "Generic hook dispatcher" "$CALLER_PWD/.git/hooks/pre-commit"
+  [ -x "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation" ]
+  grep -q "manifest" "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation"
+}
+
+@test "deobfuscate does not install hooks" {
   notes obfuscate
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscate"
 
   notes deobfuscate
 
-  [ -x "$CALLER_PWD/.git/hooks/pre-commit" ]
-  grep -q "Generic hook dispatcher" "$CALLER_PWD/.git/hooks/pre-commit"
-  [ -x "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation" ]
-  grep -q "manifest" "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation"
+  [ ! -d "$CALLER_PWD/.git/hooks/pre-commit.d" ]
 }
 
 @test "deobfuscate dry-run does not install hook" {
@@ -453,9 +457,9 @@ EOF
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q -m "obfuscated"
 
-  # Deobfuscate locally, then stage the renames
+  # Deobfuscate locally, then manually stage readable names
   notes deobfuscate
-  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" add notes/
 
   # The hook should reject this in guard mode
   NOTES_OBFUSCATE_HOOK=guard run git -C "$CALLER_PWD" commit -m "should fail"
@@ -469,8 +473,9 @@ EOF
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
 
-  # Deobfuscate (installs the auto-obfuscate hook)
+  # Deobfuscate + install hooks explicitly
   notes deobfuscate
+  notes install-hooks
 
   # Add a new deobfuscated file + stage everything
   echo -e "---\ntitle: Sneaky\n---\n# Sneaky" > "$CALLER_PWD/notes/sneaky.md"
@@ -494,27 +499,13 @@ EOF
 
 # --- Post-commit hook ---
 
-@test "deobfuscate installs post-commit deobfuscation hook" {
-  notes obfuscate
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscate"
-
-  notes deobfuscate
+@test "install-hooks installs post-commit deobfuscation hook" {
+  notes install-hooks
 
   [ -x "$CALLER_PWD/.git/hooks/post-commit" ]
   grep -q "Generic hook dispatcher" "$CALLER_PWD/.git/hooks/post-commit"
   [ -x "$CALLER_PWD/.git/hooks/post-commit.d/deobfuscation" ]
   grep -q "manifest" "$CALLER_PWD/.git/hooks/post-commit.d/deobfuscation"
-}
-
-@test "deobfuscate dry-run does not install post-commit hook" {
-  notes obfuscate
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscate"
-
-  notes deobfuscate -- --dry-run
-
-  [ ! -d "$CALLER_PWD/.git/hooks/post-commit.d" ]
 }
 
 @test "post-commit hook deobfuscates working tree after commit" {
@@ -523,12 +514,13 @@ EOF
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
 
-  # Deobfuscate (installs both pre-commit and post-commit hooks)
+  # Deobfuscate + install hooks explicitly
   notes deobfuscate
+  notes install-hooks
 
   # Add a new file and commit — hooks should handle the round-trip
   echo -e "---\ntitle: New Note\n---\n# New" > "$CALLER_PWD/notes/new-note.md"
-  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" add notes/new-note.md
   git -C "$CALLER_PWD" commit -m "add new note"
 
   # Working tree should have readable filenames (post-commit deobfuscated)
@@ -550,9 +542,10 @@ EOF
   git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
 
   notes deobfuscate
+  notes install-hooks
 
   echo -e "---\ntitle: Fresh\n---\n# Fresh content" > "$CALLER_PWD/notes/fresh.md"
-  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" add notes/fresh.md
   git -C "$CALLER_PWD" commit -m "add fresh"
 
   # Content should survive the obfuscate→deobfuscate round-trip
@@ -561,18 +554,10 @@ EOF
 }
 
 @test "post-commit hook is no-op when files are not obfuscated" {
-  # No manifest — post-commit hook should do nothing
-  notes obfuscate
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
-  notes deobfuscate
+  # Install hooks — no manifest exists, so hooks should be no-ops
+  notes install-hooks
 
-  # Remove manifest to simulate no-obfuscation repo
-  rm "$CALLER_PWD/notes/.manifest"
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q --no-verify -m "remove manifest"
-
-  # New commit shouldn't fail even though post-commit hook exists
+  # Commit should succeed even though post-commit hook exists
   echo "change" >> "$CALLER_PWD/notes/alpha.md"
   git -C "$CALLER_PWD" add -A
   run git -C "$CALLER_PWD" commit -m "should work fine"
@@ -613,14 +598,14 @@ EOF
   [ "$status" -eq 0 ]
 }
 
-# --- deobfuscate --no-stage ---
+# --- deobfuscate never stages ---
 
-@test "deobfuscate --no-stage restores names without staging" {
+@test "deobfuscate restores names without staging" {
   notes obfuscate
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
 
-  notes deobfuscate -- --no-stage
+  notes deobfuscate
 
   # Working tree has readable names
   [ -f "$CALLER_PWD/notes/alpha.md" ]
@@ -632,23 +617,12 @@ EOF
   [ -z "$staged" ]
 }
 
-@test "deobfuscate --no-stage preserves content" {
-  notes obfuscate
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
-
-  notes deobfuscate -- --no-stage
-
-  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
-  [[ "$(cat "$CALLER_PWD/notes/beta.md")" == *"# Beta"* ]]
-}
-
 @test "obfuscate works when working tree is deobfuscated but index has obfuscated names" {
-  # This is the state after deobfuscate --no-stage
+  # This is the state after deobfuscate
   notes obfuscate
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
-  notes deobfuscate -- --no-stage
+  notes deobfuscate
 
   # Now obfuscate should restore obfuscated names and stage them
   run notes obfuscate
@@ -671,15 +645,8 @@ EOF
   notes obfuscate
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
-  notes deobfuscate  # installs hooks
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q --no-verify -m "deobfuscated"
-
-  # Now simulate the --no-stage workflow
-  notes obfuscate
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q --no-verify -m "re-obfuscated"
-  notes deobfuscate -- --no-stage
+  notes deobfuscate
+  notes install-hooks
 
   # Edit a file and commit via hooks
   echo "edited" >> "$CALLER_PWD/notes/alpha.md"
@@ -704,17 +671,13 @@ EOF
 
 # --- Post-merge hook ---
 
-@test "deobfuscate installs post-merge deobfuscation hook" {
-  notes obfuscate
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscate"
-
-  notes deobfuscate
+@test "install-hooks installs post-merge deobfuscation hook" {
+  notes install-hooks
 
   [ -x "$CALLER_PWD/.git/hooks/post-merge" ]
   grep -q "Generic hook dispatcher" "$CALLER_PWD/.git/hooks/post-merge"
   [ -x "$CALLER_PWD/.git/hooks/post-merge.d/deobfuscation" ]
-  grep -q "no-stage" "$CALLER_PWD/.git/hooks/post-merge.d/deobfuscation"
+  grep -q "manifest" "$CALLER_PWD/.git/hooks/post-merge.d/deobfuscation"
 }
 
 # --- Scoped obfuscation (variadic args) ---
@@ -747,7 +710,7 @@ EOF
   notes obfuscate
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
-  notes deobfuscate -- --no-stage
+  notes deobfuscate
 
   # Re-obfuscate only one file
   notes obfuscate alpha.md
@@ -784,22 +747,18 @@ EOF
   notes obfuscate
 
   local stderr_log="$BATS_TEST_TMPDIR/warn-stderr"
-  NOTES_HOOK_CONTEXT=1 notes deobfuscate nonexistent123 2>"$stderr_log" || true
-  grep -q "Warning: unknown ID" "$stderr_log"
+  run notes deobfuscate nonexistent123
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Nothing to deobfuscate"* ]]
 }
 
 @test "pre-commit hook only obfuscates staged files" {
-  # Set up: obfuscate, commit, then deobfuscate --no-stage (installs hooks)
+  # Set up: obfuscate, commit, then deobfuscate + install hooks
   notes obfuscate
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
   notes deobfuscate
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q --no-verify -m "deobfuscated"
-  notes obfuscate
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q --no-verify -m "re-obfuscated"
-  notes deobfuscate -- --no-stage
+  notes install-hooks
   # Working tree: readable names. Index: obfuscated names matching HEAD.
 
   # Edit one file, stage only that one
