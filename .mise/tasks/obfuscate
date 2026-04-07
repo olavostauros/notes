@@ -2,6 +2,7 @@
 #MISE description="Obfuscate note filenames (reversible via deobfuscate)"
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--dry-run" help="Show what would be renamed without doing it"
+#USAGE arg "[files]..." help="Specific files to obfuscate (relative to notes dir). Omit for all."
 set -eo pipefail
 
 TARGET_DIR="${CALLER_PWD:-.}"
@@ -29,33 +30,65 @@ manifest_has_id() {
   [ -f "$manifest" ] && grep -q "^${1}	" "$manifest"
 }
 
-# Find files that need obfuscating (recurse, flatten to notes root)
+# Find files that need obfuscating
 to_rename=()
 to_restore=()
-while IFS= read -r f; do
-  [ ! -f "$f" ] && continue
 
-  # Relative path from notes_dir (e.g. "sub/note.md" or "note.md")
-  relpath="${f#"$notes_dir"/}"
+# Parse variadic args safely (mise wraps multi-word args in single quotes).
+# xargs respects shell quoting so spaces in filenames work correctly.
+# Limitation: backslashes in filenames are treated as escape characters by xargs.
+ARGS=()
+if [ -n "${usage_files:-}" ]; then
+  while IFS= read -r arg; do
+    ARGS+=("$arg")
+  done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
+fi
 
-  # Skip manifest
-  [[ "$relpath" == ".manifest" ]] && continue
+if [ ${#ARGS[@]} -gt 0 ]; then
+  # Scoped mode: only process the specified files
+  for relpath in "${ARGS[@]}"; do
+    # Strip notes_dir prefix if provided (e.g. "notes/alpha.md" → "alpha.md")
+    relpath="${relpath#"${usage_dir:-notes}/"}"
 
-  # Skip files already obfuscated (basename is a known ID)
-  base=$(basename "$f")
-  if manifest_has_id "$base"; then
-    continue
-  fi
+    [[ "$relpath" == ".manifest" ]] && continue
+    [ ! -f "$notes_dir/$relpath" ] && continue
 
-  # Rename files that already have an assigned ID (deobfuscated state)
-  existing_id=$(manifest_id_for_name "$relpath" || true)
-  if [ -n "$existing_id" ]; then
-    to_restore+=("$relpath")
-    continue
-  fi
+    base=$(basename "$relpath")
+    if manifest_has_id "$base"; then
+      continue
+    fi
 
-  to_rename+=("$relpath")
-done < <(find "$notes_dir" -type f | sort)
+    existing_id=$(manifest_id_for_name "$relpath" || true)
+    if [ -n "$existing_id" ]; then
+      to_restore+=("$relpath")
+      continue
+    fi
+
+    to_rename+=("$relpath")
+  done
+else
+  # Full mode: scan all files in notes dir
+  while IFS= read -r f; do
+    [ ! -f "$f" ] && continue
+
+    relpath="${f#"$notes_dir"/}"
+
+    [[ "$relpath" == ".manifest" ]] && continue
+
+    base=$(basename "$f")
+    if manifest_has_id "$base"; then
+      continue
+    fi
+
+    existing_id=$(manifest_id_for_name "$relpath" || true)
+    if [ -n "$existing_id" ]; then
+      to_restore+=("$relpath")
+      continue
+    fi
+
+    to_rename+=("$relpath")
+  done < <(find "$notes_dir" -type f | sort)
+fi
 
 if [ ${#to_rename[@]} -eq 0 ] && [ ${#to_restore[@]} -eq 0 ]; then
   echo "Nothing to obfuscate."

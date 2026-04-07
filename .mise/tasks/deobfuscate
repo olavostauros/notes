@@ -3,6 +3,7 @@
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--dry-run" help="Show what would be renamed without doing it"
 #USAGE flag "--no-stage" help="Use plain mv instead of git mv (working tree only, no staging)"
+#USAGE arg "[files]..." help="Specific obfuscated IDs to deobfuscate. Omit for all."
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -14,27 +15,61 @@ if [ ! -f "$manifest" ]; then
   exit 1
 fi
 
+# Helper: deobfuscate a single ID
+deobfuscate_one() {
+  local id="$1"
+  local relpath
+  relpath=$(grep "^${id}\t" "$manifest" | cut -f2 || true)
+  if [ -z "$relpath" ]; then
+    echo "Warning: unknown ID '$id', skipping" >&2
+    return
+  fi
+  if [ ! -f "$notes_dir/$id" ]; then
+    return
+  fi
+  if [ "${usage_dry_run:-}" = "true" ]; then
+    echo "  $id → $relpath"
+  else
+    target_dir=$(dirname "$notes_dir/$relpath")
+    [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
+    if [ "${usage_no_stage:-}" = "true" ]; then
+      mv "$notes_dir/$id" "$notes_dir/$relpath"
+    else
+      git -C "$TARGET_DIR" mv "$notes_dir/$id" "$notes_dir/$relpath"
+    fi
+    echo "  $id → $relpath"
+  fi
+  ((restored++)) || true
+}
+
 # Find obfuscated files to restore (bash 3.2 compatible, no declare -A)
 restored=0
-while IFS=$'\t' read -r id relpath; do
-  [ -z "$id" ] && continue
-  if [ -f "$notes_dir/$id" ]; then
-    if [ "${usage_dry_run:-}" = "true" ]; then
-      echo "  $id → $relpath"
-    else
-      # Recreate subdirectory if needed
-      target_dir=$(dirname "$notes_dir/$relpath")
-      [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
-      if [ "${usage_no_stage:-}" = "true" ]; then
-        mv "$notes_dir/$id" "$notes_dir/$relpath"
-      else
-        git -C "$TARGET_DIR" mv "$notes_dir/$id" "$notes_dir/$relpath"
-      fi
-      echo "  $id → $relpath"
-    fi
-    ((restored++)) || true
-  fi
-done < "$manifest"
+
+# Parse variadic args safely (mise wraps multi-word args in single quotes).
+# xargs respects shell quoting so spaces in filenames work correctly.
+# Limitation: backslashes in filenames are treated as escape characters by xargs.
+ARGS=()
+if [ -n "${usage_files:-}" ]; then
+  while IFS= read -r arg; do
+    ARGS+=("$arg")
+  done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
+fi
+
+if [ ${#ARGS[@]} -gt 0 ]; then
+  # Scoped mode: only deobfuscate specified IDs
+  for id in "${ARGS[@]}"; do
+    # Strip notes_dir prefix if provided (e.g. "notes/abc123" → "abc123")
+    id="${id#"${usage_dir:-notes}/"}"
+    id=$(basename "$id")
+    deobfuscate_one "$id"
+  done
+else
+  # Full mode: deobfuscate everything
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    deobfuscate_one "$id"
+  done < "$manifest"
+fi
 
 # Always install hooks when not in dry-run mode (even if already deobfuscated).
 # Skip when called from the post-commit hook itself (avoids circular reinstallation).

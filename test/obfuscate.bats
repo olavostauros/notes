@@ -667,3 +667,108 @@ EOF
   [ -x "$CALLER_PWD/.git/hooks/post-merge.d/deobfuscation" ]
   grep -q "no-stage" "$CALLER_PWD/.git/hooks/post-merge.d/deobfuscation"
 }
+
+# --- Scoped obfuscation (variadic args) ---
+
+@test "obfuscate with args only processes specified files" {
+  notes obfuscate alpha.md beta.md
+
+  # Specified files should be obfuscated
+  [ ! -f "$CALLER_PWD/notes/alpha.md" ]
+  [ ! -f "$CALLER_PWD/notes/beta.md" ]
+
+  # Unspecified file should remain
+  [ -f "$CALLER_PWD/notes/gamma.txt" ]
+
+  # Manifest should have entries for obfuscated files
+  grep -q "alpha.md" "$CALLER_PWD/notes/.manifest"
+  grep -q "beta.md" "$CALLER_PWD/notes/.manifest"
+}
+
+@test "obfuscate with args handles notes-dir prefix" {
+  notes obfuscate notes/alpha.md
+
+  [ ! -f "$CALLER_PWD/notes/alpha.md" ]
+  [ -f "$CALLER_PWD/notes/beta.md" ]
+  [ -f "$CALLER_PWD/notes/gamma.txt" ]
+}
+
+@test "obfuscate with args re-obfuscates known files" {
+  # First obfuscate all, then deobfuscate
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
+  notes deobfuscate -- --no-stage
+
+  # Re-obfuscate only one file
+  notes obfuscate alpha.md
+
+  # alpha should be obfuscated, others still readable
+  [ ! -f "$CALLER_PWD/notes/alpha.md" ]
+  [ -f "$CALLER_PWD/notes/beta.md" ]
+  [ -f "$CALLER_PWD/notes/gamma.txt" ]
+
+  # ID should be stable (same as manifest)
+  local id_alpha
+  id_alpha=$(grep 'alpha.md' "$CALLER_PWD/notes/.manifest" | cut -f1)
+  [ -f "$CALLER_PWD/notes/$id_alpha" ]
+}
+
+@test "deobfuscate with args only processes specified IDs" {
+  notes obfuscate
+
+  local id_alpha
+  id_alpha=$(grep 'alpha.md' "$CALLER_PWD/notes/.manifest" | cut -f1)
+
+  notes deobfuscate "$id_alpha"
+
+  # alpha should be restored
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+
+  # Others should remain obfuscated
+  local id_beta
+  id_beta=$(grep 'beta.md' "$CALLER_PWD/notes/.manifest" | cut -f1)
+  [ -f "$CALLER_PWD/notes/$id_beta" ]
+}
+
+@test "deobfuscate with args warns on unknown ID" {
+  notes obfuscate
+
+  local stderr_log="$BATS_TEST_TMPDIR/warn-stderr"
+  NOTES_HOOK_CONTEXT=1 notes deobfuscate nonexistent123 2>"$stderr_log" || true
+  grep -q "Warning: unknown ID" "$stderr_log"
+}
+
+@test "pre-commit hook only obfuscates staged files" {
+  # Set up: obfuscate, commit, then deobfuscate --no-stage (installs hooks)
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
+  notes deobfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "deobfuscated"
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "re-obfuscated"
+  notes deobfuscate -- --no-stage
+  # Working tree: readable names. Index: obfuscated names matching HEAD.
+
+  # Edit one file, stage only that one
+  echo "change" >> "$CALLER_PWD/notes/alpha.md"
+  git -C "$CALLER_PWD" add notes/alpha.md
+
+  # Capture stderr from commit (hooks print rename operations there)
+  local stderr_log="$BATS_TEST_TMPDIR/commit-stderr"
+  git -C "$CALLER_PWD" commit -m "edit one file" 2>"$stderr_log"
+
+  cat "$stderr_log" >&2
+
+  # Count how many files the pre-commit hook obfuscated
+  local obfuscated_count
+  obfuscated_count=$(sed -n 's/.*Auto-obfuscating \([0-9]*\) file.*/\1/p' "$stderr_log")
+  echo "auto-obfuscated: ${obfuscated_count:-none}" >&2
+
+  # Should obfuscate exactly 1 file (the staged one)
+  [ -n "$obfuscated_count" ]
+  [ "$obfuscated_count" -eq 1 ]
+}
