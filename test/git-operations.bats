@@ -12,7 +12,7 @@ setup() {
 
   # Create a bare "remote" repo
   export REMOTE="$BATS_TEST_TMPDIR/remote.git"
-  git init -q --bare "$REMOTE"
+  git init -q --bare -b main "$REMOTE"
 
   # Create the "origin" working copy (simulates another machine / agent)
   export ORIGIN="$BATS_TEST_TMPDIR/origin"
@@ -43,7 +43,7 @@ setup() {
   git -C "$LOCAL" config user.email "test@test.com"
   git -C "$LOCAL" config user.name "Test"
 
-  # Deobfuscate + install hooks on local
+  # Deobfuscate + install hooks (including merge driver) on local
   export CALLER_PWD="$LOCAL"
   notes deobfuscate
   notes install-hooks
@@ -127,9 +127,9 @@ setup() {
 
 # ── Merge ─────────────────────────────────────────────────────
 
-@test "merge: concurrent note additions cause manifest conflict" {
-  # When two branches each add notes, the manifest gets conflicting
-  # entries at the same position (sorted format). This is expected.
+@test "merge: concurrent note additions auto-merge via manifest driver" {
+  # With the manifest merge driver installed, concurrent additions to
+  # .manifest are union-merged automatically.
   CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" checkout -- .
 
@@ -145,10 +145,14 @@ setup() {
   CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" commit -q --no-verify -m "add main note"
 
-  # Merge conflicts on .manifest
+  # Merge succeeds — driver union-merges the manifest
   run git -C "$LOCAL" merge feature --no-edit
-  [ "$status" -ne 0 ]
-  [[ "$(cat "$LOCAL/notes/.manifest")" == *"<<<<<<<"* ]]
+  [ "$status" -eq 0 ]
+
+  # Manifest has all entries (alpha, beta, feature, main-note)
+  [ "$(wc -l < "$LOCAL/notes/.manifest" | tr -d ' ')" -eq 4 ]
+  grep -q "feature.md" "$LOCAL/notes/.manifest"
+  grep -q "main-note.md" "$LOCAL/notes/.manifest"
 }
 
 @test "merge: single-branch addition merges cleanly" {
@@ -230,8 +234,8 @@ setup() {
   [ -f "$LOCAL/notes/feature.md" ]
 }
 
-@test "rebase: concurrent note additions conflict on manifest" {
-  # Same as merge — concurrent manifest changes cause conflict during rebase
+@test "rebase: concurrent note additions auto-merge via manifest driver" {
+  # With the merge driver, concurrent manifest changes are union-merged.
   CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" checkout -- .
 
@@ -247,11 +251,12 @@ setup() {
   CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" commit -q --no-verify -m "add other"
 
-  # Rebase conflicts on manifest
+  # Rebase succeeds — driver union-merges the manifest
   git -C "$LOCAL" checkout -q feature
   run git -C "$LOCAL" rebase main
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
 
-  # Clean up
-  git -C "$LOCAL" rebase --abort
+  # Manifest has all entries
+  grep -q "feature.md" "$LOCAL/notes/.manifest"
+  grep -q "other.md" "$LOCAL/notes/.manifest"
 }

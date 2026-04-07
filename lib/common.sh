@@ -121,18 +121,22 @@ rename_to_obfuscated() {
   fi
 
   if [ ${#to_rename[@]} -eq 0 ] && [ ${#to_restore[@]} -eq 0 ]; then
-    return 1  # nothing to do
+    return 2  # nothing to do (distinct from error)
   fi
 
   # Track new manifest entries
   local new_entries
-  new_entries=$(mktemp)
+  new_entries=$(mktemp) || { echo "Error: failed to create temp file" >&2; return 1; }
 
   # Restore files to their known IDs
   for relpath in ${to_restore[@]+"${to_restore[@]}"}; do
     local id
     id=$(manifest_id_for_name "$manifest" "$relpath" || true)
-    mv "$notes_dir/$relpath" "$notes_dir/$id"
+    if ! mv "$notes_dir/$relpath" "$notes_dir/$id"; then
+      echo "Error: failed to rename $relpath → $id" >&2
+      rm -f "$new_entries"
+      return 1
+    fi
     printf '%s\t%s\n' "$relpath" "$id"
   done
 
@@ -147,7 +151,11 @@ rename_to_obfuscated() {
     done
 
     printf '%s\t%s\n' "$id" "$relpath" >> "$new_entries"
-    mv "$notes_dir/$relpath" "$notes_dir/$id"
+    if ! mv "$notes_dir/$relpath" "$notes_dir/$id"; then
+      echo "Error: failed to rename $relpath → $id" >&2
+      rm -f "$new_entries"
+      return 1
+    fi
     printf '%s\t%s\n' "$relpath" "$id"
   done
 
@@ -157,7 +165,7 @@ rename_to_obfuscated() {
   # Update manifest: merge existing + new entries, sorted by name.
   # An entry is live if either its obfuscated id or readable name is on disk.
   local merged
-  merged=$(mktemp)
+  merged=$(mktemp) || { echo "Error: failed to create temp file" >&2; rm -f "$new_entries"; return 1; }
 
   if [ -f "$manifest" ]; then
     while IFS=$'\t' read -r id name; do
@@ -169,12 +177,46 @@ rename_to_obfuscated() {
   fi
 
   cat "$new_entries" >> "$merged"
-  sort -t$'\t' -k2 "$merged" > "$manifest"
+  # Sort to a temp file first, then mv — avoids truncating the manifest
+  # if sort fails (sort > $manifest truncates before sort runs).
+  local sorted
+  sorted=$(mktemp) || { echo "Error: failed to create temp file" >&2; rm -f "$merged" "$new_entries"; return 1; }
+  if ! sort -t$'\t' -k2 "$merged" > "$sorted"; then
+    echo "Error: failed to sort manifest" >&2
+    rm -f "$merged" "$new_entries" "$sorted"
+    return 1
+  fi
+  mv -f "$sorted" "$manifest"
   rm -f "$merged" "$new_entries"
+}
+
+# Rename a single obfuscated ID back to its readable name.
+# Returns 0 on success (prints "<id>\t<relpath>"), 1 if skipped.
+# Top-level helper used by rename_to_readable.
+# Returns: 0=renamed, 2=skipped (not found/no match), 1=error (mv failed).
+_rename_one_to_readable() {
+  local notes_dir="$1" manifest="$2" id="$3"
+  local relpath
+  relpath=$(manifest_name_for_id "$manifest" "$id")
+  [ -z "$relpath" ] && return 2
+  [ ! -f "$notes_dir/$id" ] && return 2
+
+  local target_dir
+  target_dir=$(dirname "$notes_dir/$relpath")
+  [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
+
+  # Use -f to handle the case where the readable name already exists
+  # (e.g., committed with both readable and obfuscated names).
+  if ! mv -f "$notes_dir/$id" "$notes_dir/$relpath"; then
+    echo "Error: failed to rename $id → $relpath" >&2
+    return 1
+  fi
+  printf '%s\t%s\n' "$id" "$relpath"
 }
 
 # Rename obfuscated IDs back to readable names.
 # Outputs "<id>\t<relpath>" per renamed file.
+# Returns 0 on success, 2 if nothing to do, 1 on error.
 # Usage: rename_to_readable <notes_dir> [id...]
 #   Without ids: deobfuscates all files listed in the manifest.
 #   With ids: only deobfuscates the specified IDs.
@@ -187,34 +229,30 @@ rename_to_readable() {
 
   [ ! -f "$manifest" ] && return 1
 
-  _deobfuscate_one() {
-    local id="$1"
-    local relpath
-    relpath=$(manifest_name_for_id "$manifest" "$id")
-    [ -z "$relpath" ] && return
-    [ ! -f "$notes_dir/$id" ] && return
-
-    local target_dir
-    target_dir=$(dirname "$notes_dir/$relpath")
-    [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
-
-    mv "$notes_dir/$id" "$notes_dir/$relpath"
-    printf '%s\t%s\n' "$id" "$relpath"
-    ((count++)) || true
-  }
-
+  # _rename_one_to_readable returns: 0=renamed, 2=skipped, 1=error.
+  # Inlined dispatch avoids nested function defs leaking to global scope.
   if [ ${#scoped_ids[@]} -gt 0 ] && [ -n "${scoped_ids[0]}" ]; then
     for id in "${scoped_ids[@]}"; do
-      _deobfuscate_one "$id"
+      local _rc
+      _rename_one_to_readable "$notes_dir" "$manifest" "$id" && _rc=0 || _rc=$?
+      case $_rc in
+        0) ((count++)) || true ;;
+        1) return 1 ;;
+      esac
     done
   else
     while IFS=$'\t' read -r id relpath; do
       [ -z "$id" ] && continue
-      _deobfuscate_one "$id"
+      local _rc
+      _rename_one_to_readable "$notes_dir" "$manifest" "$id" && _rc=0 || _rc=$?
+      case $_rc in
+        0) ((count++)) || true ;;
+        1) return 1 ;;
+      esac
     done < "$manifest"
   fi
 
-  [ "$count" -eq 0 ] && return 1
+  [ "$count" -eq 0 ] && return 2
   return 0
 }
 
@@ -231,47 +269,58 @@ rename_to_readable() {
 # `git add`, breaking the normal workflow.
 
 # Set assume-unchanged on obfuscated paths. Call after deobfuscating.
-# Usage: set_status_suppression <notes_dir> [id...]
+# Usage: set_status_suppression <abs_notes_dir> [id...]
 #   Without IDs: sets flags for all entries in the manifest (full mode)
 #   With IDs: sets flags for the specified IDs only (scoped mode)
 set_status_suppression() {
-  local notes_dir="${1:?usage: set_status_suppression <notes_dir>}"
+  local abs_notes_dir="${1:?usage: set_status_suppression <abs_notes_dir>}"
   shift
   local scoped_ids=("$@")
-  local manifest="$TARGET_DIR/$notes_dir/.manifest"
+  local manifest="$abs_notes_dir/.manifest"
   [ ! -f "$manifest" ] && return
+
+  local repo_root
+  repo_root=$(git -C "$abs_notes_dir" rev-parse --show-toplevel 2>/dev/null) || return
+  local notes_dir="${abs_notes_dir#"$repo_root"/}"
 
   if [ ${#scoped_ids[@]} -gt 0 ] && [ -n "${scoped_ids[0]}" ]; then
     for id in "${scoped_ids[@]}"; do
-      git -C "$TARGET_DIR" update-index --assume-unchanged "$notes_dir/$id" 2>/dev/null || true
+      # Errors suppressed: new manifest entries may not be in the index yet
+      # (e.g., note added on a branch not yet merged). Also handles repos
+      # where the index is out of sync after a fresh clone + deobfuscate.
+      git -C "$repo_root" update-index --assume-unchanged "$notes_dir/$id" 2>/dev/null || true
     done
   else
     while IFS=$'\t' read -r id relpath; do
       [ -z "$id" ] && continue
-      git -C "$TARGET_DIR" update-index --assume-unchanged "$notes_dir/$id" 2>/dev/null || true
+      git -C "$repo_root" update-index --assume-unchanged "$notes_dir/$id" 2>/dev/null || true
     done < "$manifest"
   fi
 }
 
 # Clear assume-unchanged flags. Call before obfuscating.
-# Usage: clear_status_suppression <notes_dir> [id...]
+# Usage: clear_status_suppression <abs_notes_dir> [id...]
 #   Without IDs: clears all flags (full mode)
 #   With IDs: clears only the specified IDs (scoped mode)
 clear_status_suppression() {
-  local notes_dir="${1:?usage: clear_status_suppression <notes_dir>}"
+  local abs_notes_dir="${1:?usage: clear_status_suppression <abs_notes_dir>}"
   shift
   local scoped_ids=("$@")
-  local manifest="$TARGET_DIR/$notes_dir/.manifest"
+  local manifest="$abs_notes_dir/.manifest"
   [ ! -f "$manifest" ] && return
+
+  local repo_root
+  repo_root=$(git -C "$abs_notes_dir" rev-parse --show-toplevel 2>/dev/null) || return
+  local notes_dir="${abs_notes_dir#"$repo_root"/}"
 
   if [ ${#scoped_ids[@]} -gt 0 ] && [ -n "${scoped_ids[0]}" ]; then
     for id in "${scoped_ids[@]}"; do
-      git -C "$TARGET_DIR" update-index --no-assume-unchanged "$notes_dir/$id" 2>/dev/null || true
+      git -C "$repo_root" update-index --no-assume-unchanged "$notes_dir/$id" 2>/dev/null || true
     done
   else
     while IFS=$'\t' read -r id relpath; do
       [ -z "$id" ] && continue
-      git -C "$TARGET_DIR" update-index --no-assume-unchanged "$notes_dir/$id" 2>/dev/null || true
+      git -C "$repo_root" update-index --no-assume-unchanged "$notes_dir/$id" 2>/dev/null || true
     done < "$manifest"
   fi
 }
@@ -310,6 +359,24 @@ install_obfuscation_hook() {
   local target="$TARGET_DIR/.git/hooks/pre-commit.d/obfuscation"
   sed "s|__NOTES_DIR__|$notes_dir|g" "$HOOKS_DIR/obfuscation.template" > "$target"
   chmod +x "$target"
+}
+
+# Install the manifest merge driver.
+# Configures git to use our custom merge driver for .manifest files.
+install_manifest_merge_driver() {
+  local notes_dir="${1:-notes}"
+  local driver_path="$MISE_CONFIG_ROOT/lib/manifest-merge-driver.sh"
+  local gitattributes="$TARGET_DIR/.gitattributes"
+
+  # Register the merge driver in git config
+  git -C "$TARGET_DIR" config merge.manifest.name "Union merge driver for notes manifest"
+  git -C "$TARGET_DIR" config merge.manifest.driver "bash \"$driver_path\" %O %A %B"
+
+  # Add .gitattributes entry if not already present
+  local pattern="$notes_dir/.manifest merge=manifest"
+  if ! grep -qF "$pattern" "$gitattributes" 2>/dev/null; then
+    echo "$pattern" >> "$gitattributes"
+  fi
 }
 
 # Install the post-commit deobfuscation hook.

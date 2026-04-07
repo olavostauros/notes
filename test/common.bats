@@ -124,10 +124,10 @@ setup() {
   done <<< "$output"
 }
 
-@test "rename_to_obfuscated returns 1 when nothing to do" {
+@test "rename_to_obfuscated returns 2 when nothing to do" {
   rename_to_obfuscated "$CALLER_PWD/notes" > /dev/null
   run rename_to_obfuscated "$CALLER_PWD/notes"
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 2 ]
 }
 
 @test "rename_to_obfuscated skips .manifest" {
@@ -248,12 +248,12 @@ setup() {
   done <<< "$output"
 }
 
-@test "rename_to_readable returns 1 when nothing to do" {
+@test "rename_to_readable returns 2 when nothing to do" {
   rename_to_obfuscated "$CALLER_PWD/notes" > /dev/null
   rename_to_readable "$CALLER_PWD/notes" > /dev/null
 
   run rename_to_readable "$CALLER_PWD/notes"
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 2 ]
 }
 
 @test "rename_to_readable returns 1 without manifest" {

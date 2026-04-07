@@ -64,16 +64,22 @@ if [ ${#ARGS[@]} -gt 0 ]; then
     id=$(manifest_id_for_name "$manifest" "$relpath" || true)
     [ -n "$id" ] && scoped_ids+=("$id")
   done
-  [ ${#scoped_ids[@]} -gt 0 ] && clear_status_suppression "$notes_dir" "${scoped_ids[@]}"
+  [ ${#scoped_ids[@]} -gt 0 ] && clear_status_suppression "$abs_notes_dir" "${scoped_ids[@]}"
 else
-  clear_status_suppression "$notes_dir"
+  clear_status_suppression "$abs_notes_dir"
 fi
 
 # Perform the rename via Layer 1
-output=$(rename_to_obfuscated "$abs_notes_dir" "${ARGS[@]}") || {
+# Exit codes: 0=success, 2=nothing to do, 1=error
+# Use && rc=0 || rc=$? to capture exit code without triggering errexit.
+output=$(rename_to_obfuscated "$abs_notes_dir" "${ARGS[@]}") && rc=0 || rc=$?
+if [ $rc -eq 2 ]; then
   echo "Nothing to obfuscate."
   exit 0
-}
+elif [ $rc -ne 0 ]; then
+  echo "Error: obfuscation failed" >&2
+  exit $rc
+fi
 
 # Stage the results: add obfuscated files, remove readable names from index
 new_count=0

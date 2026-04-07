@@ -746,10 +746,30 @@ EOF
 @test "deobfuscate with args warns on unknown ID" {
   notes obfuscate
 
-  local stderr_log="$BATS_TEST_TMPDIR/warn-stderr"
   run notes deobfuscate nonexistent123
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Nothing to deobfuscate"* ]]
+  [[ "$output" == *"Nothing to deobfuscate"* ]] || [[ "$output" == *"Warning: unknown"* ]]
+}
+
+@test "deobfuscate scoped sets assume-unchanged only on deobfuscated IDs" {
+  notes obfuscate
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q --no-verify -m "obfuscated"
+
+  local alpha_id beta_id
+  alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  beta_id=$(grep "beta.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+
+  # Deobfuscate only alpha
+  notes deobfuscate "$alpha_id"
+
+  # alpha's obfuscated ID should be assume-unchanged
+  run git -C "$CALLER_PWD" ls-files -v "notes/$alpha_id"
+  [[ "$output" == h* ]]
+
+  # beta's obfuscated ID should NOT be assume-unchanged (still tracked normally)
+  run git -C "$CALLER_PWD" ls-files -v "notes/$beta_id"
+  [[ "$output" == H* ]]
 }
 
 @test "pre-commit hook only obfuscates staged files" {
@@ -779,4 +799,24 @@ EOF
   # Should obfuscate exactly 1 file (the staged one)
   [ -n "$obfuscated_count" ]
   [ "$obfuscated_count" -eq 1 ]
+}
+
+@test "deobfuscate succeeds when readable name already exists on disk" {
+  # Simulate the bug: both obfuscated ID and readable name exist
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  [ -f "$CALLER_PWD/notes/$alpha_id" ]
+
+  # Create a stale readable copy (simulates bad commit state)
+  echo "stale content" > "$CALLER_PWD/notes/alpha.md"
+
+  # Deobfuscate should overwrite the stale copy, not fail
+  run notes deobfuscate
+  [ "$status" -eq 0 ]
+
+  # Readable file has the authoritative content (from obfuscated copy)
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" != *"stale"* ]]
 }

@@ -24,6 +24,8 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
     # Set CALLER_PWD so the notes shim resolves to this repo
     export CALLER_PWD
     CALLER_PWD="$(git rev-parse --show-toplevel)"
-    notes deobfuscate >/dev/null 2>&1 || true
+    # Suppress stdout (rename output) but let stderr through so errors
+    # from Layer 1 (mv failures, permission issues) are visible.
+    notes deobfuscate >/dev/null || true
   fi
 fi

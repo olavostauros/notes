@@ -15,7 +15,10 @@ cd "$TARGET_DIR"
 # is a local convenience that unlock provides.
 if [ -f "$TARGET_DIR/notes/.manifest" ]; then
   cd "$MISE_CONFIG_ROOT" && CALLER_PWD="$TARGET_DIR" mise run -q obfuscate
-  # Stage obfuscated files but don't auto-commit — let the user decide.
+  # Stage obfuscated files but don't auto-commit — the caller decides
+  # when to commit. git-crypt lock works on staged content, so staging
+  # here is sufficient. No existing automation relies on auto-commit;
+  # CI and hooks handle their own commit flows.
   git -C "$TARGET_DIR" add notes/
 fi
 

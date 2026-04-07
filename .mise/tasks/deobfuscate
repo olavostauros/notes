@@ -49,20 +49,41 @@ if [ "${usage_dry_run:-}" = "true" ]; then
 fi
 
 # Perform the rename via Layer 1
-output=$(rename_to_readable "$abs_notes_dir" "${ARGS[@]}") || {
+# Exit codes: 0=success, 2=nothing to do, 1=error
+# Use subshell to capture exit code without triggering errexit.
+output=$(rename_to_readable "$abs_notes_dir" "${ARGS[@]}") && rc=0 || rc=$?
+if [ $rc -eq 2 ]; then
   echo "Nothing to deobfuscate."
   exit 0
-}
+elif [ $rc -ne 0 ]; then
+  echo "Error: deobfuscation failed" >&2
+  exit $rc
+fi
 
-# Print what was renamed
+# Print what was renamed, collect IDs for scoped suppression
 restored=0
+suppressed_ids=()
 while IFS=$'\t' read -r id relpath; do
   echo "  $id → $relpath"
+  suppressed_ids+=("$id")
   ((restored++)) || true
 done <<< "$output"
 
-# Set status suppression so git status stays clean
-set_status_suppression "$notes_dir"
+# Warn about unknown IDs in scoped mode (matches dry-run behavior)
+if [ ${#ARGS[@]} -gt 0 ]; then
+  for id in "${ARGS[@]}"; do
+    found=false
+    for sid in "${suppressed_ids[@]}"; do
+      [ "$sid" = "$id" ] && found=true && break
+    done
+    if [ "$found" = false ]; then
+      echo "Warning: unknown or already-deobfuscated ID '$id', skipped" >&2
+    fi
+  done
+fi
+
+# Set status suppression only for the IDs we just deobfuscated
+set_status_suppression "$abs_notes_dir" "${suppressed_ids[@]}"
 
 echo ""
 echo "Restored $restored file(s). Manifest preserved for stable IDs."
