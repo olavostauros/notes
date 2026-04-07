@@ -145,11 +145,18 @@ fi
 if [ "${usage_dry_run:-}" != "true" ]; then
   merged=$(mktemp)
 
-  # Copy existing entries, dropping stale ones (files that no longer exist)
+  # Copy existing entries, dropping stale ones (files that no longer exist).
+  # An entry is live if *either* its obfuscated id or its readable name is on
+  # disk — this is correct for fully-obfuscated, fully-deobfuscated, and mixed
+  # working trees. In particular, scoped obfuscate (called by the pre-commit
+  # hook for a single file) must not drop entries for unrelated files that are
+  # currently deobfuscated on disk.
   if [ -f "$manifest" ]; then
     while IFS=$'\t' read -r id name; do
       [ -z "$id" ] && continue
-      [ -f "$notes_dir/$id" ] && printf '%s\t%s\n' "$id" "$name"
+      if [ -f "$notes_dir/$id" ] || [ -f "$notes_dir/$name" ]; then
+        printf '%s\t%s\n' "$id" "$name"
+      fi
     done < "$manifest" > "$merged"
   fi
 

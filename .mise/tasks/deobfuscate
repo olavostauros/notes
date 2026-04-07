@@ -19,7 +19,9 @@ fi
 deobfuscate_one() {
   local id="$1"
   local relpath
-  relpath=$(grep "^${id}\t" "$manifest" | cut -f2 || true)
+  # NB: `grep "^${id}\t"` does not work — BRE treats `\t` as literal, not a
+  # tab. Use an ANSI-C quoted tab instead.
+  relpath=$(grep "^${id}"$'\t' "$manifest" | cut -f2 || true)
   if [ -z "$relpath" ]; then
     echo "Warning: unknown ID '$id', skipping" >&2
     return

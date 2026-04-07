@@ -98,6 +98,55 @@ setup() {
   [ ! -f "$CALLER_PWD/notes/delta.md" ]
 }
 
+# --- Scoped obfuscation from deobfuscated state ---
+#
+# Regression: scoped `notes obfuscate <file>` used to rebuild the manifest by
+# checking which obfuscated IDs exist on disk. In the deobfuscated working
+# tree, only the just-obfuscated file's ID is on disk — the rest are readable
+# names — so the manifest got truncated to one entry, losing all other
+# mappings. The staleness check must treat an entry as live if *either* its
+# obfuscated id or its readable name is on disk.
+
+@test "scoped obfuscate from deobfuscated state preserves manifest entries" {
+  notes obfuscate
+  [ "$(wc -l < "$CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 3 ]
+  beta_id=$(grep -P '\tbeta\.md$' "$CALLER_PWD/notes/.manifest" | cut -f1)
+  gamma_id=$(grep -P '\tgamma\.txt$' "$CALLER_PWD/notes/.manifest" | cut -f1)
+
+  # Drop to deobfuscated state — all files at readable names, none at IDs.
+  notes deobfuscate
+
+  # Scoped obfuscate of just one file (simulates the pre-commit hook path).
+  run notes obfuscate alpha.md
+  [ "$status" -eq 0 ]
+
+  # Manifest must still have all three entries, and beta/gamma must keep their
+  # original IDs (stable across the scoped op).
+  [ "$(wc -l < "$CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 3 ]
+  grep -q $'\talpha\.md$' "$CALLER_PWD/notes/.manifest"
+  grep -q "^${beta_id}"$'\t''beta\.md$' "$CALLER_PWD/notes/.manifest"
+  grep -q "^${gamma_id}"$'\t''gamma\.txt$' "$CALLER_PWD/notes/.manifest"
+
+  # beta and gamma stay on disk under readable names (scoped op must not touch
+  # them).
+  [ -f "$CALLER_PWD/notes/beta.md" ]
+  [ -f "$CALLER_PWD/notes/gamma.txt" ]
+}
+
+@test "full obfuscate from fully-deobfuscated state preserves manifest entries" {
+  notes obfuscate
+  [ "$(wc -l < "$CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 3 ]
+  alpha_id=$(grep -P '\talpha\.md$' "$CALLER_PWD/notes/.manifest" | cut -f1)
+
+  notes deobfuscate
+  # Full obfuscate with no args — should find all three readable files and
+  # restore them to their known IDs without dropping manifest entries.
+  run notes obfuscate
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$CALLER_PWD/notes/.manifest" | tr -d ' ')" -eq 3 ]
+  [ -f "$CALLER_PWD/notes/$alpha_id" ]
+}
+
 # --- Stale manifest cleanup ---
 
 @test "obfuscate removes stale entries for deleted files" {
