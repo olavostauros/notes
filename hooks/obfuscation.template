@@ -22,7 +22,11 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
   if [ "${#unobfuscated[@]}" -gt 0 ]; then
     if [ "$MODE" = "auto" ]; then
       echo "Auto-obfuscating ${#unobfuscated[@]} file(s)..." >&2
-      notes obfuscate >&2
+      # Set CALLER_PWD so the notes shim resolves to this repo
+      export CALLER_PWD
+      CALLER_PWD="$(git rev-parse --show-toplevel)"
+      # Pass only the staged unobfuscated files
+      notes obfuscate "${unobfuscated[@]}" >&2
     else
       echo "ERROR: Staged notes have non-obfuscated filenames:" >&2
       printf '  %s\n' "${unobfuscated[@]}" >&2

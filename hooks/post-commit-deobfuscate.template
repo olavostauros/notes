@@ -21,6 +21,9 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
   done
 
   if [ "$obfuscated" -eq 1 ]; then
+    # Set CALLER_PWD so the notes shim resolves to this repo
+    export CALLER_PWD
+    CALLER_PWD="$(git rev-parse --show-toplevel)"
     NOTES_HOOK_CONTEXT=1 notes deobfuscate --no-stage >/dev/null 2>&1 || true
   fi
 fi
