@@ -2,48 +2,18 @@
 #MISE description="Restore obfuscated filenames to their original names"
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--dry-run" help="Show what would be renamed without doing it"
-#USAGE flag "--no-stage" help="Use plain mv instead of git mv (working tree only, no staging)"
 #USAGE arg "[files]..." help="Specific obfuscated IDs to deobfuscate. Omit for all."
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
-notes_dir="$TARGET_DIR/${usage_dir:-notes}"
-manifest="$notes_dir/.manifest"
+notes_dir="${usage_dir:-notes}"
+abs_notes_dir="$TARGET_DIR/$notes_dir"
+manifest="$abs_notes_dir/.manifest"
 
 if [ ! -f "$manifest" ]; then
   echo "Error: no manifest found at $manifest" >&2
   exit 1
 fi
-
-# Helper: deobfuscate a single ID
-deobfuscate_one() {
-  local id="$1"
-  local relpath
-  relpath=$(grep "^${id}\t" "$manifest" | cut -f2 || true)
-  if [ -z "$relpath" ]; then
-    echo "Warning: unknown ID '$id', skipping" >&2
-    return
-  fi
-  if [ ! -f "$notes_dir/$id" ]; then
-    return
-  fi
-  if [ "${usage_dry_run:-}" = "true" ]; then
-    echo "  $id → $relpath"
-  else
-    target_dir=$(dirname "$notes_dir/$relpath")
-    [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
-    if [ "${usage_no_stage:-}" = "true" ]; then
-      mv "$notes_dir/$id" "$notes_dir/$relpath"
-    else
-      git -C "$TARGET_DIR" mv "$notes_dir/$id" "$notes_dir/$relpath"
-    fi
-    echo "  $id → $relpath"
-  fi
-  ((restored++)) || true
-}
-
-# Find obfuscated files to restore (bash 3.2 compatible, no declare -A)
-restored=0
 
 # Parse variadic args safely (mise wraps multi-word args in single quotes).
 # xargs respects shell quoting so spaces in filenames work correctly.
@@ -51,39 +21,69 @@ restored=0
 ARGS=()
 if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
+    # Strip notes_dir prefix if provided (e.g. "notes/abc123" → "abc123")
+    arg="${arg#"${notes_dir}/"}"
+    arg=$(basename "$arg")
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
 fi
 
-if [ ${#ARGS[@]} -gt 0 ]; then
-  # Scoped mode: only deobfuscate specified IDs
-  for id in "${ARGS[@]}"; do
-    # Strip notes_dir prefix if provided (e.g. "notes/abc123" → "abc123")
-    id="${id#"${usage_dir:-notes}/"}"
-    id=$(basename "$id")
-    deobfuscate_one "$id"
-  done
-else
-  # Full mode: deobfuscate everything
-  while IFS=$'\t' read -r id relpath; do
-    [ -z "$id" ] && continue
-    deobfuscate_one "$id"
-  done < "$manifest"
-fi
-
-# Always install hooks when not in dry-run mode (even if already deobfuscated).
-# Skip when called from the post-commit hook itself (avoids circular reinstallation).
-if [ "${usage_dry_run:-}" != "true" ] && [ -z "${NOTES_HOOK_CONTEXT:-}" ]; then
-  install_obfuscation_hook "${usage_dir:-notes}"
-  install_deobfuscation_hook "${usage_dir:-notes}"
-fi
-
-if [ "$restored" -eq 0 ]; then
-  echo "Nothing to deobfuscate."
+if [ "${usage_dry_run:-}" = "true" ]; then
+  # Dry-run: just show what would be renamed
+  if [ ${#ARGS[@]} -gt 0 ]; then
+    for id in "${ARGS[@]}"; do
+      relpath=$(manifest_name_for_id "$manifest" "$id")
+      if [ -z "$relpath" ]; then
+        echo "Warning: unknown ID '$id', skipping" >&2
+        continue
+      fi
+      [ -f "$abs_notes_dir/$id" ] && echo "  $id → $relpath"
+    done
+  else
+    while IFS=$'\t' read -r id relpath; do
+      [ -z "$id" ] && continue
+      [ -f "$abs_notes_dir/$id" ] && echo "  $id → $relpath"
+    done < "$manifest"
+  fi
   exit 0
 fi
 
-if [ "${usage_dry_run:-}" != "true" ]; then
-  echo ""
-  echo "Restored $restored file(s). Manifest preserved for stable IDs."
+# Perform the rename via Layer 1
+# Exit codes: 0=success, 2=nothing to do, 1=error
+# Use subshell to capture exit code without triggering errexit.
+output=$(rename_to_readable "$abs_notes_dir" "${ARGS[@]}") && rc=0 || rc=$?
+if [ $rc -eq 2 ]; then
+  echo "Nothing to deobfuscate."
+  exit 0
+elif [ $rc -ne 0 ]; then
+  echo "Error: deobfuscation failed" >&2
+  exit $rc
 fi
+
+# Print what was renamed, collect IDs for scoped suppression
+restored=0
+suppressed_ids=()
+while IFS=$'\t' read -r id relpath; do
+  echo "  $id → $relpath"
+  suppressed_ids+=("$id")
+  ((restored++)) || true
+done <<< "$output"
+
+# Warn about unknown IDs in scoped mode (matches dry-run behavior)
+if [ ${#ARGS[@]} -gt 0 ]; then
+  for id in "${ARGS[@]}"; do
+    found=false
+    for sid in "${suppressed_ids[@]}"; do
+      [ "$sid" = "$id" ] && found=true && break
+    done
+    if [ "$found" = false ]; then
+      echo "Warning: unknown or already-deobfuscated ID '$id', skipped" >&2
+    fi
+  done
+fi
+
+# Set status suppression only for the IDs we just deobfuscated
+set_status_suppression "$abs_notes_dir" "${suppressed_ids[@]}"
+
+echo ""
+echo "Restored $restored file(s). Manifest preserved for stable IDs."

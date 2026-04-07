@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # After commit, restore obfuscated filenames to readable names locally.
-# Uses --no-stage so the index stays clean (matching HEAD's obfuscated names)
+# Deobfuscate never stages (index stays clean matching HEAD's obfuscated names)
 # while the working tree has readable names for humans.
 set -eo pipefail
 
@@ -24,6 +24,8 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
     # Set CALLER_PWD so the notes shim resolves to this repo
     export CALLER_PWD
     CALLER_PWD="$(git rev-parse --show-toplevel)"
-    NOTES_HOOK_CONTEXT=1 notes deobfuscate --no-stage >/dev/null 2>&1 || true
+    # Suppress stdout (rename output) but let stderr through so errors
+    # from Layer 1 (mv failures, permission issues) are visible.
+    notes deobfuscate >/dev/null || true
   fi
 fi

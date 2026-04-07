@@ -73,6 +73,7 @@ fi
 install_encryption_hook
 install_obfuscation_hook "${usage_dir:-notes}"
 install_deobfuscation_hook "${usage_dir:-notes}"
+install_manifest_merge_driver "${usage_dir:-notes}"
 echo "  Installed hooks"
 
 echo ""
