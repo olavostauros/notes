@@ -131,3 +131,20 @@ generate_test_key() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"Verified"* ]]
 }
+
+@test "setup creates empty .manifest for obfuscation bootstrap" {
+  notes setup
+
+  [ -f "$TARGET_DIR/notes/.manifest" ]
+  [ ! -s "$TARGET_DIR/notes/.manifest" ]  # empty
+}
+
+@test "setup does not overwrite existing .manifest" {
+  mkdir -p "$TARGET_DIR/notes"
+  printf 'aaa00001\texisting.md\n' > "$TARGET_DIR/notes/.manifest"
+
+  notes setup
+
+  [ -f "$TARGET_DIR/notes/.manifest" ]
+  grep -q "existing.md" "$TARGET_DIR/notes/.manifest"
+}

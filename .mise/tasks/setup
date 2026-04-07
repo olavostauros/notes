@@ -69,11 +69,19 @@ else
   echo "  .gitattributes already has git-crypt patterns, skipping"
 fi
 
+# --- Bootstrap obfuscation manifest ---
+NOTES_DIR="${usage_dir:-notes}"
+if [ ! -f "$TARGET_DIR/$NOTES_DIR/.manifest" ]; then
+  mkdir -p "$TARGET_DIR/$NOTES_DIR"
+  touch "$TARGET_DIR/$NOTES_DIR/.manifest"
+  echo "  Created $NOTES_DIR/.manifest (enables filename obfuscation)"
+fi
+
 # --- Install hooks ---
 install_encryption_hook
-install_obfuscation_hook "${usage_dir:-notes}"
-install_deobfuscation_hook "${usage_dir:-notes}"
-install_manifest_merge_driver "${usage_dir:-notes}"
+install_obfuscation_hook "$NOTES_DIR"
+install_deobfuscation_hook "$NOTES_DIR"
+install_manifest_merge_driver "$NOTES_DIR"
 echo "  Installed hooks"
 
 echo ""
