@@ -768,7 +768,7 @@ EOF
   obfuscated_count=$(sed -n 's/.*Auto-obfuscating \([0-9]*\) file.*/\1/p' "$stderr_log")
   echo "auto-obfuscated: ${obfuscated_count:-none}" >&2
 
-  # Should only obfuscate the 1 staged file, not all 3
+  # Should obfuscate exactly 1 file (the staged one)
   [ -n "$obfuscated_count" ]
-  [ "$obfuscated_count" -le 1 ]
+  [ "$obfuscated_count" -eq 1 ]
 }
