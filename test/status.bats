@@ -102,13 +102,19 @@ load test_helper
 }
 
 @test "status handles locked repo gracefully" {
-  # Locking requires a clean git status, which deobfuscated names break.
-  # Blocked on notes#39 (C′ exclude management) for a proper fix.
+  # Integration test — needs real git-crypt lock, blocked on notes#39.
   skip "needs notes#39 (clean git status via exclude management)"
 }
 
-@test "status --json handles locked repo gracefully" {
-  # When unblocked, assert: .obfuscation.status == "unknown", .obfuscation.notes == null
+@test "status --json reports unknown obfuscation when locked" {
+  # Needs rudi lock, which needs a clean tree — blocked on notes#39.
+  # Expected contract: .obfuscation.status == "unknown", .obfuscation.notes == null
+  skip "needs notes#39 (clean git status via exclude management)"
+}
+
+@test "status text reports locked with unlock hint" {
+  # Needs rudi lock — blocked on notes#39.
+  # Expected: output contains "locked" and "notes unlock"
   skip "needs notes#39 (clean git status via exclude management)"
 }
 
