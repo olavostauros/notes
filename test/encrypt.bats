@@ -167,6 +167,22 @@ generate_test_key() {
   echo "$output" | grep -q "already has encrypted notes"
 }
 
+@test "setup shows unlock hint even when first file is plaintext" {
+  notes setup
+  mkdir -p "$TARGET_DIR/notes/archive"
+  # Plaintext file at top level
+  echo "readme" > "$TARGET_DIR/notes/README.md"
+  # Encrypted file in subdirectory
+  printf '\x00GITCRYPT\x00' > "$TARGET_DIR/notes/archive/secret.md"
+  git -C "$TARGET_DIR" add -A
+  git -C "$TARGET_DIR" commit -q -m "add notes"
+
+  run notes setup
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "notes unlock"
+  echo "$output" | grep -q "already has encrypted notes"
+}
+
 @test "setup shows standard next steps on fresh repo" {
   run notes setup
   [ "$status" -eq 0 ]

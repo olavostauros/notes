@@ -97,10 +97,12 @@ else
   # (i.e., joining an existing repo vs creating a new one).
   has_encrypted_notes=false
   if [ -d "$TARGET_DIR/$NOTES_DIR" ]; then
-    encrypted_file=$(find "$TARGET_DIR/$NOTES_DIR" -type f ! -name .manifest -print -quit 2>/dev/null)
-    if [ -n "$encrypted_file" ] && head -c 10 "$encrypted_file" 2>/dev/null | grep -q "GITCRYPT"; then
-      has_encrypted_notes=true
-    fi
+    while IFS= read -r -d '' f; do
+      if head -c 10 "$f" 2>/dev/null | grep -q "GITCRYPT"; then
+        has_encrypted_notes=true
+        break
+      fi
+    done < <(find "$TARGET_DIR/$NOTES_DIR" -type f ! -name .manifest -print0 2>/dev/null)
   fi
 
   echo ""
