@@ -108,6 +108,7 @@ load test_helper
 }
 
 @test "status --json handles locked repo gracefully" {
+  # When unblocked, assert: .obfuscation.status == "unknown", .obfuscation.notes == null
   skip "needs notes#39 (clean git status via exclude management)"
 }
 

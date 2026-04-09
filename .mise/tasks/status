@@ -52,18 +52,30 @@ fi
 # --- Output ---
 
 if [ "$JSON" = "true" ]; then
-  jq -nc \
-    --arg enc "$enc_status" \
-    --argjson enc_unlocked "$enc_unlocked" \
-    --arg obf "$obf_status" \
-    --argjson total_notes "$total_notes" \
-    '{
-      encryption: { status: $enc, unlocked: $enc_unlocked },
-      obfuscation: { status: $obf, notes: $total_notes }
-    }'
+  if [ "$enc_status" = "locked" ]; then
+    jq -nc \
+      --arg enc "$enc_status" \
+      --argjson enc_unlocked "$enc_unlocked" \
+      '{
+        encryption: { status: $enc, unlocked: $enc_unlocked },
+        obfuscation: { status: "unknown", notes: null }
+      }'
+  else
+    jq -nc \
+      --arg enc "$enc_status" \
+      --argjson enc_unlocked "$enc_unlocked" \
+      --arg obf "$obf_status" \
+      --argjson total_notes "$total_notes" \
+      '{
+        encryption: { status: $enc, unlocked: $enc_unlocked },
+        obfuscation: { status: $obf, notes: $total_notes }
+      }'
+  fi
 else
   echo "Encryption: $enc_status"
-  rudi status
+  if [ "$enc_status" != "not_initialized" ]; then
+    rudi status
+  fi
   echo ""
   if [ "$enc_status" = "locked" ]; then
     echo "Obfuscation: unknown (repo is locked)"
