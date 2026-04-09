@@ -101,6 +101,23 @@ load test_helper
   echo "$output" | jq -e '.obfuscation.notes == 2'
 }
 
+@test "status handles locked repo gracefully" {
+  # Integration test — needs real git-crypt lock, blocked on notes#39.
+  skip "needs notes#39 (clean git status via exclude management)"
+}
+
+@test "status --json reports unknown obfuscation when locked" {
+  # Needs rudi lock, which needs a clean tree — blocked on notes#39.
+  # Expected contract: .obfuscation.status == "unknown", .obfuscation.notes == null
+  skip "needs notes#39 (clean git status via exclude management)"
+}
+
+@test "status text reports locked with unlock hint" {
+  # Needs rudi lock — blocked on notes#39.
+  # Expected: output contains "locked" and "notes unlock"
+  skip "needs notes#39 (clean git status via exclude management)"
+}
+
 @test "status --json shows deobfuscated after deobfuscate" {
   notes setup
   mkdir -p "$TARGET_DIR/notes"

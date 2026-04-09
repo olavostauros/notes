@@ -2,6 +2,7 @@
 #MISE description="Initialize encryption in the current repo"
 #USAGE flag "--gpg-key <fingerprint>" var=#true help="GPG key fingerprint(s) to add as collaborators"
 #USAGE flag "--pattern <pattern>" var=#true help="Gitattributes patterns to encrypt (default: notes/**)"
+#USAGE flag "--unlock" help="Unlock after setup (for joining an existing repo)"
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -84,8 +85,38 @@ install_deobfuscation_hook "$NOTES_DIR"
 install_manifest_merge_driver "$NOTES_DIR"
 echo "  Installed hooks"
 
-echo ""
-echo "Done! Next steps:"
-echo "  1. Check status:     notes status"
-echo "  2. Commit the setup: git add .gitattributes .git-crypt && git commit"
-echo "  3. Place files in encrypted paths — they encrypt on push"
+# --- Unlock if requested ---
+if [ "${usage_unlock:-false}" = "true" ]; then
+  echo ""
+  echo "Unlocking..."
+  cd "$MISE_CONFIG_ROOT" && CALLER_PWD="$TARGET_DIR" mise run -q unlock
+  echo ""
+  echo "Done! Repo is set up and unlocked."
+else
+  # Detect if this is an existing repo with encrypted notes
+  # (i.e., joining an existing repo vs creating a new one).
+  has_encrypted_notes=false
+  if [ -d "$TARGET_DIR/$NOTES_DIR" ]; then
+    while IFS= read -r -d '' f; do
+      if head -c 10 "$f" 2>/dev/null | grep -q "GITCRYPT"; then
+        has_encrypted_notes=true
+        break
+      fi
+    done < <(find "$TARGET_DIR/$NOTES_DIR" -type f ! -name .manifest -print0 2>/dev/null)
+  fi
+
+  echo ""
+  echo "Done! Next steps:"
+  if [ "$has_encrypted_notes" = "true" ]; then
+    echo "  1. Unlock the repo:  notes unlock"
+    echo "  2. Check status:     notes status"
+    echo ""
+    echo "  This repo already has encrypted notes."
+    echo "  Run 'notes unlock' to decrypt them (requires your GPG key)."
+    echo "  Or re-run setup with --unlock: notes setup --unlock"
+  else
+    echo "  1. Check status:     notes status"
+    echo "  2. Commit the setup: git add .gitattributes .git-crypt && git commit"
+    echo "  3. Place files in encrypted paths — they encrypt on push"
+  fi
+fi
