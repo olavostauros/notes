@@ -148,3 +148,38 @@ generate_test_key() {
   [ -f "$TARGET_DIR/notes/.manifest" ]
   grep -q "existing.md" "$TARGET_DIR/notes/.manifest"
 }
+
+# --- setup next-steps ---
+
+@test "setup shows unlock hint when repo has encrypted notes" {
+  notes setup
+  mkdir -p "$TARGET_DIR/notes"
+  echo -e "---\ntitle: Test\n---" > "$TARGET_DIR/notes/test.md"
+  git -C "$TARGET_DIR" add -A
+  git -C "$TARGET_DIR" commit -q -m "add note"
+
+  # Simulate encrypted notes by writing a GITCRYPT header
+  printf '\x00GITCRYPT\x00' > "$TARGET_DIR/notes/test.md"
+
+  run notes setup
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "notes unlock"
+  echo "$output" | grep -q "already has encrypted notes"
+}
+
+@test "setup shows standard next steps on fresh repo" {
+  run notes setup
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "Commit the setup"
+  # Should NOT mention unlock
+  ! echo "$output" | grep -q "already has encrypted notes"
+}
+
+@test "setup --unlock runs unlock after setup" {
+  # --unlock on a fresh repo (no GPG users) will fail at unlock
+  # because there's nothing to decrypt. But it should attempt it.
+  run notes setup -- --unlock
+  # unlock fails on a repo with no GPG users — that's expected
+  # The important thing is that setup itself completed and attempted unlock
+  echo "$output" | grep -q "Unlocking"
+}

@@ -6,31 +6,38 @@ set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 require_git
+require_rudi
 
 JSON="${usage_json:-false}"
 NOTES_DIR="${usage_dir:-notes}"
 
 cd "$TARGET_DIR"
 
-# --- Encryption ---
+# --- Encryption (delegated to rudi) ---
 
-enc_status="not_initialized"
-enc_unlocked=false
-if is_initialized; then
-  # git-crypt stores the symmetric key here when unlocked
-  if [ -f "$TARGET_DIR/.git/git-crypt/keys/default" ]; then
+rudi_json=$(rudi status --json)
+enc_initialized=$(echo "$rudi_json" | jq -r '.initialized')
+enc_unlocked=$(echo "$rudi_json" | jq -r '.unlocked')
+
+if [ "$enc_initialized" = "true" ]; then
+  if [ "$enc_unlocked" = "true" ]; then
     enc_status="unlocked"
-    enc_unlocked=true
   else
     enc_status="locked"
   fi
+else
+  enc_status="not_initialized"
+  enc_unlocked=false
 fi
 
 # --- Obfuscation ---
+# When locked, encrypted files (including the manifest) are binary gibberish.
+# Skip obfuscation detection entirely — it's meaningless on a locked repo.
 
 obf_status="none"
 total_notes=0
-if [ -f "$NOTES_DIR/.manifest" ]; then
+
+if [ "$enc_status" != "locked" ] && [ -f "$NOTES_DIR/.manifest" ]; then
   total_notes=$(wc -l < "$NOTES_DIR/.manifest" | tr -d ' ')
   first_hash=$(head -1 "$NOTES_DIR/.manifest" | cut -f1)
   first_name=$(head -1 "$NOTES_DIR/.manifest" | cut -f2)
@@ -56,9 +63,13 @@ if [ "$JSON" = "true" ]; then
     }'
 else
   echo "Encryption: $enc_status"
-  if command -v rudi &>/dev/null && is_initialized; then
-    rudi status
-  fi
+  rudi status
   echo ""
-  echo "Obfuscation: $obf_status ($total_notes notes)"
+  if [ "$enc_status" = "locked" ]; then
+    echo "Obfuscation: unknown (repo is locked)"
+    echo ""
+    echo "Run 'notes unlock' to decrypt files and see obfuscation status."
+  else
+    echo "Obfuscation: $obf_status ($total_notes notes)"
+  fi
 fi

@@ -15,6 +15,16 @@ notes() {
 }
 export -f notes
 
+# rudi() wrapper — calls rudi with CALLER_PWD set
+rudi() {
+  if [ -z "${CALLER_PWD:-}" ]; then
+    echo "CALLER_PWD not set" >&2
+    return 1
+  fi
+  CALLER_PWD="$CALLER_PWD" command rudi "$@"
+}
+export -f rudi
+
 setup() {
   export TARGET_DIR="$BATS_TEST_TMPDIR/test-repo"
   mkdir -p "$TARGET_DIR"

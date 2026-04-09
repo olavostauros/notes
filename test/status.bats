@@ -101,6 +101,16 @@ load test_helper
   echo "$output" | jq -e '.obfuscation.notes == 2'
 }
 
+@test "status handles locked repo gracefully" {
+  # Locking requires a clean git status, which deobfuscated names break.
+  # Blocked on notes#39 (C′ exclude management) for a proper fix.
+  skip "needs notes#39 (clean git status via exclude management)"
+}
+
+@test "status --json handles locked repo gracefully" {
+  skip "needs notes#39 (clean git status via exclude management)"
+}
+
 @test "status --json shows deobfuscated after deobfuscate" {
   notes setup
   mkdir -p "$TARGET_DIR/notes"
