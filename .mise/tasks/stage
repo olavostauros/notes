@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+#MISE description="Stage changed notes for commit (bypasses exclude)"
+#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--dry-run" help="Show what would be staged without doing it"
+#USAGE arg "[files]..." help="Specific notes to stage (readable names, relative to notes dir). Omit for all changed."
+set -eo pipefail
+
+source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/changes.sh"
+require_git
+
+notes_dir="${usage_dir:-notes}"
+abs_notes_dir="$TARGET_DIR/$notes_dir"
+manifest="$abs_notes_dir/.manifest"
+
+if [ ! -f "$manifest" ]; then
+  echo "No manifest found. Run 'notes obfuscate' first." >&2
+  exit 1
+fi
+
+# Parse variadic args
+ARGS=()
+if [ -n "${usage_files:-}" ]; then
+  while IFS= read -r arg; do
+    arg="${arg#"${notes_dir}/"}"
+    ARGS+=("$arg")
+  done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
+fi
+
+# Detect changes
+changes=$(detect_changes "$abs_notes_dir") || true
+
+if [ -z "$changes" ]; then
+  echo "No changes to stage."
+  exit 0
+fi
+
+# Filter and collect files to stage
+to_stage=()
+while IFS=$'\t' read -r status relpath; do
+  if [ ${#ARGS[@]} -gt 0 ] && [ -n "${ARGS[0]}" ]; then
+    match=false
+    for f in "${ARGS[@]}"; do
+      [ "$f" = "$relpath" ] && match=true && break
+    done
+    $match || continue
+  fi
+
+  case "$status" in
+    modified|new)
+      to_stage+=("$relpath")
+      ;;
+    deleted)
+      # For deleted notes, we need to remove the obfuscated file from the index
+      to_stage+=("$relpath")
+      ;;
+  esac
+done <<< "$changes"
+
+if [ ${#to_stage[@]} -eq 0 ]; then
+  echo "No changes to stage."
+  exit 0
+fi
+
+if [ "${usage_dry_run:-}" = "true" ]; then
+  echo "Would stage:"
+  for relpath in "${to_stage[@]}"; do
+    echo "  $relpath"
+  done
+  exit 0
+fi
+
+# Stage each file using git add -f to bypass .git/info/exclude
+staged=0
+for relpath in "${to_stage[@]}"; do
+  local_file="$abs_notes_dir/$relpath"
+
+  if [ -f "$local_file" ]; then
+    # Modified or new: force-add the readable file
+    git -C "$TARGET_DIR" add -f "$notes_dir/$relpath"
+    echo "  staged: $relpath"
+  else
+    # Deleted: remove the obfuscated ID from the index
+    id=$(manifest_id_for_name "$manifest" "$relpath")
+    if [ -n "$id" ]; then
+      git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$id" 2>/dev/null || true
+      echo "  staged (delete): $relpath"
+    fi
+  fi
+  ((staged++)) || true
+done
+
+echo ""
+echo "Staged $staged file(s). Run 'git commit' to commit."

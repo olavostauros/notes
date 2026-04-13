@@ -40,6 +40,26 @@ require_initialized() {
   fi
 }
 
+# ── Path helpers ────────────────────────────────────────────
+
+# Resolve the notes directory path relative to the repo root.
+# Handles macOS symlinks (/tmp → /private/tmp) by resolving real paths.
+# Usage: resolve_notes_dir <abs_notes_dir>
+# Sets: RESOLVED_REPO_ROOT, RESOLVED_NOTES_DIR (relative)
+resolve_notes_dir() {
+  local abs_notes_dir="$1"
+  local repo_root
+  repo_root=$(git -C "$abs_notes_dir" rev-parse --show-toplevel 2>/dev/null) || return
+
+  # Resolve symlinks so path stripping works on macOS
+  local real_notes real_root
+  real_notes=$(cd "$abs_notes_dir" && pwd -P)
+  real_root=$(cd "$repo_root" && pwd -P)
+
+  RESOLVED_REPO_ROOT="$repo_root"
+  RESOLVED_NOTES_DIR="${real_notes#"$real_root"/}"
+}
+
 # ── Manifest helpers ──────────────────────────────────────────
 # Manifest format: <id>\t<name>
 # All functions take the manifest path as first arg.

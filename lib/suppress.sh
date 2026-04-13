@@ -28,9 +28,9 @@ add_exclude_entries() {
   local manifest="$abs_notes_dir/.manifest"
   [ ! -f "$manifest" ] && return
 
-  local repo_root
-  repo_root=$(git -C "$abs_notes_dir" rev-parse --show-toplevel 2>/dev/null) || return
-  local notes_dir="${abs_notes_dir#"$repo_root"/}"
+  resolve_notes_dir "$abs_notes_dir" || return
+  local repo_root="$RESOLVED_REPO_ROOT"
+  local notes_dir="$RESOLVED_NOTES_DIR"
   local exclude_file="$repo_root/.git/info/exclude"
 
   # Ensure the info directory exists
@@ -105,9 +105,9 @@ remove_exclude_entries() {
   local manifest="$abs_notes_dir/.manifest"
   [ ! -f "$manifest" ] && return
 
-  local repo_root
-  repo_root=$(git -C "$abs_notes_dir" rev-parse --show-toplevel 2>/dev/null) || return
-  local notes_dir="${abs_notes_dir#"$repo_root"/}"
+  resolve_notes_dir "$abs_notes_dir" || return
+  local repo_root="$RESOLVED_REPO_ROOT"
+  local notes_dir="$RESOLVED_NOTES_DIR"
   local exclude_file="$repo_root/.git/info/exclude"
 
   [ ! -f "$exclude_file" ] && return
@@ -208,9 +208,9 @@ set_status_suppression() {
   local manifest="$abs_notes_dir/.manifest"
   [ ! -f "$manifest" ] && return
 
-  local repo_root
-  repo_root=$(git -C "$abs_notes_dir" rev-parse --show-toplevel 2>/dev/null) || return
-  local notes_dir="${abs_notes_dir#"$repo_root"/}"
+  resolve_notes_dir "$abs_notes_dir" || return
+  local repo_root="$RESOLVED_REPO_ROOT"
+  local notes_dir="$RESOLVED_NOTES_DIR"
 
   # Set assume-unchanged flags
   if [ ${#scoped_ids[@]} -gt 0 ] && [ -n "${scoped_ids[0]}" ]; then
@@ -240,9 +240,9 @@ clear_status_suppression() {
   local manifest="$abs_notes_dir/.manifest"
   [ ! -f "$manifest" ] && return
 
-  local repo_root
-  repo_root=$(git -C "$abs_notes_dir" rev-parse --show-toplevel 2>/dev/null) || return
-  local notes_dir="${abs_notes_dir#"$repo_root"/}"
+  resolve_notes_dir "$abs_notes_dir" || return
+  local repo_root="$RESOLVED_REPO_ROOT"
+  local notes_dir="$RESOLVED_NOTES_DIR"
 
   # Clear assume-unchanged flags
   if [ ${#scoped_ids[@]} -gt 0 ] && [ -n "${scoped_ids[0]}" ]; then

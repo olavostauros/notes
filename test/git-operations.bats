@@ -54,7 +54,7 @@ setup() {
 @test "pull: new note from remote appears deobfuscated locally" {
   # Origin adds a new note (hooks auto-obfuscate on commit)
   echo -e "---\ntitle: Gamma\n---\n# Gamma" > "$ORIGIN/notes/gamma.md"
-  git -C "$ORIGIN" add notes/gamma.md
+  CALLER_PWD="$ORIGIN" notes stage gamma.md
   git -C "$ORIGIN" commit -q -m "add gamma"
   git -C "$ORIGIN" push -q
 
@@ -69,7 +69,7 @@ setup() {
 @test "pull: remote edit to existing note is visible locally" {
   # Origin edits alpha (readable on disk, hooks handle obfuscation)
   echo "Updated content" >> "$ORIGIN/notes/alpha.md"
-  git -C "$ORIGIN" add notes/alpha.md
+  CALLER_PWD="$ORIGIN" notes stage alpha.md
   git -C "$ORIGIN" commit -q -m "edit alpha"
   git -C "$ORIGIN" push -q
 
@@ -91,7 +91,7 @@ setup() {
 
   # Origin adds a completely new note and pushes
   echo -e "---\ntitle: Delta\n---\n# Delta" > "$ORIGIN/notes/delta.md"
-  git -C "$ORIGIN" add notes/delta.md
+  CALLER_PWD="$ORIGIN" notes stage delta.md
   git -C "$ORIGIN" commit -q -m "add delta"
   git -C "$ORIGIN" push -q
 
@@ -108,7 +108,7 @@ setup() {
 @test "pull: remote edit to existing note works even with readable files on disk" {
   # Origin edits alpha and pushes (hooks auto-obfuscate)
   echo "origin change" >> "$ORIGIN/notes/alpha.md"
-  git -C "$ORIGIN" add notes/alpha.md
+  CALLER_PWD="$ORIGIN" notes stage alpha.md
   git -C "$ORIGIN" commit -q -m "edit alpha"
   git -C "$ORIGIN" push -q
 
