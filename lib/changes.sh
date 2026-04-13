@@ -107,10 +107,9 @@ show_diffs() {
     fi
 
     local readable_file="$abs_notes_dir/$relpath"
-    local git_path="$notes_dir/$id"
     local id
     id=$(manifest_id_for_name "$manifest" "$relpath")
-    git_path="$notes_dir/$id"
+    local git_path="$notes_dir/$id"
 
     case "$status" in
       modified)
