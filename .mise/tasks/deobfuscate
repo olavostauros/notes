@@ -89,3 +89,5 @@ set_status_suppression "$abs_notes_dir" "${suppressed_ids[@]}"
 
 echo ""
 echo "Restored $restored file(s). Manifest preserved for stable IDs."
+echo ""
+echo "Use 'notes changes' to see edits, 'notes stage' to stage for commit."
