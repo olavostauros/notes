@@ -6,6 +6,7 @@
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/hooks.sh"
 require_git
 require_rudi
 
@@ -118,5 +119,11 @@ else
     echo "  1. Check status:     notes status"
     echo "  2. Commit the setup: git add .gitattributes .git-crypt && git commit"
     echo "  3. Place files in encrypted paths — they encrypt on push"
+    echo ""
+    echo "Editing workflow:"
+    echo "  notes changes            Show what's changed (diffs)"
+    echo "  notes changes --summary  Show change summary"
+    echo "  notes stage              Stage changed notes for commit"
+    echo "  notes stage <file>       Stage a specific note"
   fi
 fi

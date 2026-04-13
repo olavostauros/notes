@@ -31,4 +31,7 @@ setup() {
   git -C "$TARGET_DIR" init -q
   export CALLER_PWD="$TARGET_DIR"
   source "$MISE_CONFIG_ROOT/lib/common.sh"
+  source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
+  source "$MISE_CONFIG_ROOT/lib/suppress.sh"
+  source "$MISE_CONFIG_ROOT/lib/hooks.sh"
 }

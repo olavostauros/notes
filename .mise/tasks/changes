@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#MISE description="Show changed notes (diffs against last commit)"
+#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--summary" help="Show only the change summary (modified/new/deleted), no diffs"
+#USAGE arg "[files]..." help="Specific notes to check (readable names, relative to notes dir). Omit for all."
+set -eo pipefail
+
+source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/changes.sh"
+require_git
+
+notes_dir="${usage_dir:-notes}"
+abs_notes_dir="$TARGET_DIR/$notes_dir"
+manifest="$abs_notes_dir/.manifest"
+
+if [ ! -f "$manifest" ]; then
+  echo "No manifest found. Run 'notes obfuscate' first." >&2
+  exit 1
+fi
+
+# Parse variadic args
+ARGS=()
+if [ -n "${usage_files:-}" ]; then
+  while IFS= read -r arg; do
+    arg="${arg#"${notes_dir}/"}"
+    ARGS+=("$arg")
+  done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
+fi
+
+if [ "${usage_summary:-}" = "true" ]; then
+  # Summary mode: just list changes
+  changes=$(detect_changes "$abs_notes_dir") || true
+
+  if [ -z "$changes" ]; then
+    echo "No changes."
+    exit 0
+  fi
+
+  # Apply file filter if specified
+  modified=0 new=0 deleted=0
+  while IFS=$'\t' read -r status relpath; do
+    if [ ${#ARGS[@]} -gt 0 ] && [ -n "${ARGS[0]}" ]; then
+      match=false
+      for f in "${ARGS[@]}"; do
+        [ "$f" = "$relpath" ] && match=true && break
+      done
+      $match || continue
+    fi
+
+    case "$status" in
+      modified) echo "  modified:  $relpath"; ((modified++)) || true ;;
+      new)      echo "  new:       $relpath"; ((new++)) || true ;;
+      deleted)  echo "  deleted:   $relpath"; ((deleted++)) || true ;;
+    esac
+  done <<< "$changes"
+
+  total=$((modified + new + deleted))
+  if [ "$total" -eq 0 ]; then
+    echo "No changes."
+  else
+    echo ""
+    echo "$total change(s): $modified modified, $new new, $deleted deleted"
+  fi
+else
+  # Diff mode: show full diffs
+  changes=$(detect_changes "$abs_notes_dir") || true
+
+  if [ -z "$changes" ]; then
+    echo "No changes."
+    exit 0
+  fi
+
+  show_diffs "$abs_notes_dir" "${ARGS[@]}"
+fi

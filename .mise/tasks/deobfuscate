@@ -6,6 +6,8 @@
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
+source "$MISE_CONFIG_ROOT/lib/suppress.sh"
 notes_dir="${usage_dir:-notes}"
 abs_notes_dir="$TARGET_DIR/$notes_dir"
 manifest="$abs_notes_dir/.manifest"
@@ -87,3 +89,5 @@ set_status_suppression "$abs_notes_dir" "${suppressed_ids[@]}"
 
 echo ""
 echo "Restored $restored file(s). Manifest preserved for stable IDs."
+echo ""
+echo "Use 'notes changes' to see edits, 'notes stage' to stage for commit."

@@ -650,7 +650,7 @@ EOF
 
   # Edit a file and commit via hooks
   echo "edited" >> "$CALLER_PWD/notes/alpha.md"
-  git -C "$CALLER_PWD" add notes/alpha.md
+  notes stage alpha.md
   run git -C "$CALLER_PWD" commit -m "edit alpha"
   [ "$status" -eq 0 ]
 
@@ -783,7 +783,7 @@ EOF
 
   # Edit one file, stage only that one
   echo "change" >> "$CALLER_PWD/notes/alpha.md"
-  git -C "$CALLER_PWD" add notes/alpha.md
+  git -C "$CALLER_PWD" add -f notes/alpha.md
 
   # Capture stderr from commit (hooks print rename operations there)
   local stderr_log="$BATS_TEST_TMPDIR/commit-stderr"
