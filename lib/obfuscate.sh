@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# obfuscate.sh — Layer 1: Filesystem + Manifest operations
+# Pure renames + manifest updates. No git staging, no suppression.
+
+# Rename readable files to obfuscated IDs.
+# Outputs "<relpath>\t<id>" per renamed file (for callers to stage).
+# Usage: rename_to_obfuscated <notes_dir> [file...]
+#   Without files: scans notes_dir for all non-obfuscated files.
+#   With files: only processes the listed files (relative to notes_dir).
+rename_to_obfuscated() {
+  local notes_dir="$1"
+  shift
+  local scoped_files=("$@")
+  local manifest="$notes_dir/.manifest"
+
+  local to_rename=() to_restore=()
+
+  if [ ${#scoped_files[@]} -gt 0 ] && [ -n "${scoped_files[0]}" ]; then
+    for relpath in "${scoped_files[@]}"; do
+      [[ "$relpath" == ".manifest" ]] && continue
+      [ ! -f "$notes_dir/$relpath" ] && continue
+
+      local base
+      base=$(basename "$relpath")
+      if manifest_has_id "$manifest" "$base"; then
+        continue  # already obfuscated
+      fi
+
+      local existing_id
+      existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
+      if [ -n "$existing_id" ]; then
+        to_restore+=("$relpath")
+      else
+        to_rename+=("$relpath")
+      fi
+    done
+  else
+    while IFS= read -r f; do
+      [ ! -f "$f" ] && continue
+      local relpath="${f#"$notes_dir"/}"
+      [[ "$relpath" == ".manifest" ]] && continue
+
+      local base
+      base=$(basename "$f")
+      if manifest_has_id "$manifest" "$base"; then
+        continue
+      fi
+
+      local existing_id
+      existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
+      if [ -n "$existing_id" ]; then
+        to_restore+=("$relpath")
+      else
+        to_rename+=("$relpath")
+      fi
+    done < <(find "$notes_dir" -type f | sort)
+  fi
+
+  if [ ${#to_rename[@]} -eq 0 ] && [ ${#to_restore[@]} -eq 0 ]; then
+    return 2  # nothing to do (distinct from error)
+  fi
+
+  # Track new manifest entries
+  local new_entries
+  new_entries=$(mktemp) || { echo "Error: failed to create temp file" >&2; return 1; }
+
+  # Restore files to their known IDs
+  for relpath in ${to_restore[@]+"${to_restore[@]}"}; do
+    local id
+    id=$(manifest_id_for_name "$manifest" "$relpath" || true)
+    if ! mv "$notes_dir/$relpath" "$notes_dir/$id"; then
+      echo "Error: failed to rename $relpath → $id" >&2
+      rm -f "$new_entries"
+      return 1
+    fi
+    printf '%s\t%s\n' "$relpath" "$id"
+  done
+
+  # Generate IDs and rename new files
+  for relpath in ${to_rename[@]+"${to_rename[@]}"}; do
+    local id
+    id=$(openssl rand -hex 4)
+    while manifest_has_id "$manifest" "$id" || \
+          grep -q "^${id}"$'\t' "$new_entries" 2>/dev/null || \
+          [ -f "$notes_dir/$id" ]; do
+      id=$(openssl rand -hex 4)
+    done
+
+    printf '%s\t%s\n' "$id" "$relpath" >> "$new_entries"
+    if ! mv "$notes_dir/$relpath" "$notes_dir/$id"; then
+      echo "Error: failed to rename $relpath → $id" >&2
+      rm -f "$new_entries"
+      return 1
+    fi
+    printf '%s\t%s\n' "$relpath" "$id"
+  done
+
+  # Clean up empty directories after flattening
+  find "$notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+
+  # Update manifest: merge existing + new entries, sorted by name.
+  # An entry is live if either its obfuscated id or readable name is on disk.
+  local merged
+  merged=$(mktemp) || { echo "Error: failed to create temp file" >&2; rm -f "$new_entries"; return 1; }
+
+  if [ -f "$manifest" ]; then
+    while IFS=$'\t' read -r id name; do
+      [ -z "$id" ] && continue
+      if [ -f "$notes_dir/$id" ] || [ -f "$notes_dir/$name" ]; then
+        printf '%s\t%s\n' "$id" "$name"
+      fi
+    done < "$manifest" > "$merged"
+  fi
+
+  cat "$new_entries" >> "$merged"
+  # Sort to a temp file first, then mv — avoids truncating the manifest
+  # if sort fails (sort > $manifest truncates before sort runs).
+  local sorted
+  sorted=$(mktemp) || { echo "Error: failed to create temp file" >&2; rm -f "$merged" "$new_entries"; return 1; }
+  if ! sort -t$'\t' -k2 "$merged" > "$sorted"; then
+    echo "Error: failed to sort manifest" >&2
+    rm -f "$merged" "$new_entries" "$sorted"
+    return 1
+  fi
+  mv -f "$sorted" "$manifest"
+  rm -f "$merged" "$new_entries"
+}
+
+# Rename a single obfuscated ID back to its readable name.
+# Returns: 0=renamed, 2=skipped (not found/no match), 1=error (mv failed).
+_rename_one_to_readable() {
+  local notes_dir="$1" manifest="$2" id="$3"
+  local relpath
+  relpath=$(manifest_name_for_id "$manifest" "$id")
+  [ -z "$relpath" ] && return 2
+  [ ! -f "$notes_dir/$id" ] && return 2
+
+  local target_dir
+  target_dir=$(dirname "$notes_dir/$relpath")
+  [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
+
+  # Use -f to handle the case where the readable name already exists
+  # (e.g., committed with both readable and obfuscated names).
+  if ! mv -f "$notes_dir/$id" "$notes_dir/$relpath"; then
+    echo "Error: failed to rename $id → $relpath" >&2
+    return 1
+  fi
+  printf '%s\t%s\n' "$id" "$relpath"
+}
+
+# Rename obfuscated IDs back to readable names.
+# Outputs "<id>\t<relpath>" per renamed file.
+# Returns 0 on success, 2 if nothing to do, 1 on error.
+# Usage: rename_to_readable <notes_dir> [id...]
+#   Without ids: deobfuscates all files listed in the manifest.
+#   With ids: only deobfuscates the specified IDs.
+rename_to_readable() {
+  local notes_dir="$1"
+  shift
+  local scoped_ids=("$@")
+  local manifest="$notes_dir/.manifest"
+  local count=0
+
+  [ ! -f "$manifest" ] && return 1
+
+  # _rename_one_to_readable returns: 0=renamed, 2=skipped, 1=error.
+  if [ ${#scoped_ids[@]} -gt 0 ] && [ -n "${scoped_ids[0]}" ]; then
+    for id in "${scoped_ids[@]}"; do
+      local _rc
+      _rename_one_to_readable "$notes_dir" "$manifest" "$id" && _rc=0 || _rc=$?
+      case $_rc in
+        0) ((count++)) || true ;;
+        1) return 1 ;;
+      esac
+    done
+  else
+    while IFS=$'\t' read -r id relpath; do
+      [ -z "$id" ] && continue
+      local _rc
+      _rename_one_to_readable "$notes_dir" "$manifest" "$id" && _rc=0 || _rc=$?
+      case $_rc in
+        0) ((count++)) || true ;;
+        1) return 1 ;;
+      esac
+    done < "$manifest"
+  fi
+
+  [ "$count" -eq 0 ] && return 2
+  return 0
+}

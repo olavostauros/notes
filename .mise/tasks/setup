@@ -6,6 +6,7 @@
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/hooks.sh"
 require_git
 require_rudi
 
