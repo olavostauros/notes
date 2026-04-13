@@ -26,17 +26,18 @@ detect_changes() {
 
     if [ -f "$readable_file" ]; then
       # File exists on disk — check if it's new or modified
-      local committed_content
-      committed_content=$(git -C "$repo_root" show "HEAD:$git_path" 2>/dev/null) || {
+      local head_hash
+      head_hash=$(git -C "$repo_root" rev-parse "HEAD:$git_path" 2>/dev/null) || {
         # Not in HEAD — it's a new note
         printf 'new\t%s\n' "$relpath"
         continue
       }
 
-      # Compare content
-      local disk_content
-      disk_content=$(cat "$readable_file")
-      if [ "$disk_content" != "$committed_content" ]; then
+      # Hash the readable file through git's clean filter (handles encryption).
+      # --path tells git which .gitattributes filters to apply.
+      local disk_hash
+      disk_hash=$(git -C "$repo_root" hash-object --path="$git_path" "$readable_file" 2>/dev/null) || continue
+      if [ "$head_hash" != "$disk_hash" ]; then
         printf 'modified\t%s\n' "$relpath"
       fi
     else
@@ -114,10 +115,10 @@ show_diffs() {
     case "$status" in
       modified)
         echo "=== $relpath (modified) ==="
-        # Create a temp file with committed content for diff
+        # Use cat-file --filters to get decrypted content (handles git-crypt)
         local tmp
         tmp=$(mktemp) || continue
-        git -C "$repo_root" show "HEAD:$git_path" > "$tmp" 2>/dev/null
+        git -C "$repo_root" cat-file --filters "HEAD:$git_path" > "$tmp" 2>/dev/null
         diff -u --label "a/$relpath" --label "b/$relpath" "$tmp" "$readable_file" || true
         rm -f "$tmp"
         echo ""
@@ -131,7 +132,7 @@ show_diffs() {
         echo "=== $relpath (deleted) ==="
         local tmp
         tmp=$(mktemp) || continue
-        git -C "$repo_root" show "HEAD:$git_path" > "$tmp" 2>/dev/null
+        git -C "$repo_root" cat-file --filters "HEAD:$git_path" > "$tmp" 2>/dev/null
         diff -u --label "a/$relpath" --label /dev/null "$tmp" /dev/null || true
         rm -f "$tmp"
         echo ""
