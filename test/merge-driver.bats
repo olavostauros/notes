@@ -246,3 +246,108 @@ setup() {
   grep -qF "ddd00001" "$OURS"
   ! grep -qF "bbb00001" "$OURS"
 }
+
+# ── git-crypt integration (notes#???) ─────────────────────────
+#
+# Regression: git invokes the merge driver with index content, which for
+# git-crypt-tracked files is the encrypted ciphertext (10-byte header
+# \0GITCRYPT\0 followed by AEAD-encrypted payload). The driver must decrypt
+# before attempting to parse tab-separated entries, or it silently produces
+# a 0-byte merged manifest and wipes the mapping for all collaborators.
+#
+# Symptom observed on den main 2026-04-15 → 2026-04-17: manifest toggled
+# between 0 bytes and tiny partial fragments across every merge commit,
+# causing agents' `notes stage` to misidentify tracked obfuscated files
+# as "new" on every session.
+
+@test "merge driver: encrypted inputs (git-crypt) are decrypted before merge" {
+  # Skip if git-crypt isn't installed locally.
+  if ! command -v git-crypt >/dev/null; then
+    skip "git-crypt not installed"
+  fi
+
+  # Set up a real git-crypt'd repo so we have valid encrypted content.
+  local repo="$BATS_TEST_TMPDIR/crypt-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  ( cd "$repo" && git-crypt init >/dev/null 2>&1 ) || skip "git-crypt init failed"
+
+  # Tell git-crypt to encrypt notes/.manifest
+  cat > "$repo/.gitattributes" <<EOT
+notes/.manifest filter=git-crypt diff=git-crypt
+EOT
+  mkdir -p "$repo/notes"
+
+  # Write a plaintext manifest, commit (clean filter encrypts it on write-to-index)
+  cat > "$repo/notes/.manifest" <<EOT
+aaa00001	alpha.md
+bbb00001	beta.md
+EOT
+  git -C "$repo" add .gitattributes notes/.manifest
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "init"
+
+  # Extract the encrypted blob from the index — that's what git hands the merge driver
+  local encrypted_anc="$BATS_TEST_TMPDIR/enc_anc"
+  local encrypted_ours="$BATS_TEST_TMPDIR/enc_ours"
+  local encrypted_theirs="$BATS_TEST_TMPDIR/enc_theirs"
+
+  git -C "$repo" cat-file -p "HEAD:notes/.manifest" > "$encrypted_anc"
+
+  # Verify we really have encrypted content (header check)
+  local header
+  header=$(dd if="$encrypted_anc" bs=1 skip=1 count=8 2>/dev/null)
+  [ "$header" = "GITCRYPT" ] || fail "expected encrypted content but got: $(head -c 20 "$encrypted_anc" | od -An -c)"
+
+  # Create an "ours" variant with one added entry, encrypted the same way
+  cat > "$repo/notes/.manifest" <<EOT
+aaa00001	alpha.md
+bbb00001	beta.md
+ccc00001	gamma.md
+EOT
+  git -C "$repo" add notes/.manifest
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "ours"
+  git -C "$repo" cat-file -p "HEAD:notes/.manifest" > "$encrypted_ours"
+
+  # Create a "theirs" variant with a different added entry
+  cat > "$repo/notes/.manifest" <<EOT
+aaa00001	alpha.md
+bbb00001	beta.md
+ddd00001	delta.md
+EOT
+  git -C "$repo" add notes/.manifest
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "theirs"
+  git -C "$repo" cat-file -p "HEAD:notes/.manifest" > "$encrypted_theirs"
+
+  # Run the merge driver from inside the repo (git-crypt needs access to keys)
+  cd "$repo"
+  run bash "$DRIVER" "$encrypted_anc" "$encrypted_ours" "$encrypted_theirs"
+
+  # Expect successful merge (no conflict; union of additions)
+  [ "$status" -eq 0 ]
+
+  # Result is written back to `ours` — and git will run the clean filter on
+  # it before writing to the index, so the driver must output PLAINTEXT.
+  local result_size
+  result_size=$(wc -c < "$encrypted_ours" | tr -d ' ')
+  [ "$result_size" -gt 0 ] || fail "driver wrote empty result — encrypted input not decrypted"
+
+  # All three entries should be present (alpha from ancestor, gamma from ours, delta from theirs)
+  grep -qF "alpha.md" "$encrypted_ours" || fail "missing alpha.md: $(cat "$encrypted_ours")"
+  grep -qF "beta.md"  "$encrypted_ours" || fail "missing beta.md"
+  grep -qF "gamma.md" "$encrypted_ours" || fail "missing gamma.md"
+  grep -qF "delta.md" "$encrypted_ours" || fail "missing delta.md"
+}
+
+@test "merge driver: plaintext inputs (no git-crypt) still merge correctly" {
+  # Ensure the git-crypt detection doesn't break the plaintext path.
+  make_manifest "$ANCESTOR" "aaa00001\talpha.md"
+  make_manifest "$OURS"     "aaa00001\talpha.md" "bbb00001\tbeta.md"
+  make_manifest "$THEIRS"   "aaa00001\talpha.md" "ccc00001\tgamma.md"
+
+  run bash "$DRIVER" "$ANCESTOR" "$OURS" "$THEIRS"
+  [ "$status" -eq 0 ]
+
+  grep -qF "alpha.md" "$OURS"
+  grep -qF "beta.md"  "$OURS"
+  grep -qF "gamma.md" "$OURS"
+}

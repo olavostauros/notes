@@ -32,9 +32,44 @@ THEIRS="$3"    # %B — branch being merged
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# Normalize: strip blank lines, sort by name
+# Git invokes merge drivers with index content, which for git-crypt-tracked
+# files is the encrypted ciphertext (starting with the 10-byte header
+# "\0GITCRYPT\0"). We need plaintext to merge.
+#
+# If the file is encrypted, decrypt it through git-crypt's smudge filter. If
+# smudge fails (repo locked, git-crypt not installed), fall back to the raw
+# content so the merge attempt isn't fatal — but it will almost certainly
+# produce a conflict or empty result, which is more visible than silently
+# dropping the manifest.
+decrypt_if_needed() {
+  local src="$1" dst="$2"
+  if [ ! -s "$src" ]; then
+    : > "$dst"
+    return 0
+  fi
+  # git-crypt files begin with the 10-byte header \0 G I T C R Y P T \0.
+  # Bash strings can't hold the leading \0 (it terminates the string), so
+  # read bytes 2-9 and check they spell "GITCRYPT".
+  local header
+  header=$(dd if="$src" bs=1 skip=1 count=8 2>/dev/null)
+  if [ "$header" = "GITCRYPT" ]; then
+    if ! git-crypt smudge < "$src" > "$dst" 2>/dev/null; then
+      echo "manifest-merge-driver: git-crypt smudge failed on $src — is the repo unlocked?" >&2
+      cp "$src" "$dst"
+      return 1
+    fi
+  else
+    cp "$src" "$dst"
+  fi
+}
+
+# Normalize: decrypt if encrypted, strip blank lines, sort by name
 normalize() {
-  grep -v '^$' "$1" 2>/dev/null | sort -t$'\t' -k2 || true
+  local src="$1" plaintext
+  plaintext=$(mktemp)
+  decrypt_if_needed "$src" "$plaintext" || return 1
+  grep -v '^$' "$plaintext" 2>/dev/null | sort -t$'\t' -k2 || true
+  rm -f "$plaintext"
 }
 
 normalize "$ANCESTOR" > "$WORK/anc"
