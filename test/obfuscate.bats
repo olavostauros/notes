@@ -830,3 +830,76 @@ EOF
   [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
   [[ "$(cat "$CALLER_PWD/notes/alpha.md")" != *"stale"* ]]
 }
+
+# ── Refuse re-obfuscation of already-hex-named files ──────────
+
+@test "obfuscate refuses files whose basename is an 8-hex id" {
+  # Simulate the broken state we saw on den/fold through April 2026:
+  # an obfuscated file exists on disk, but the manifest has lost its entry.
+  # Without this guard, `notes obfuscate` would treat the hex file as
+  # unobfuscated, generate a fresh random id, and create a duplicate blob.
+  mkdir -p "$CALLER_PWD/notes"
+  echo "---
+title: orphan" > "$CALLER_PWD/notes/deadbeef"
+  # No manifest entry for deadbeef — simulates the lost-mapping case
+
+  run notes obfuscate "deadbeef"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to obfuscate"* ]]
+  [[ "$output" == *"deadbeef"* ]]
+
+  # File must not have been renamed
+  [ -f "$CALLER_PWD/notes/deadbeef" ]
+}
+
+@test "obfuscate refuses hex-named file in full scan mode" {
+  # Same guard, but via unscoped `notes obfuscate` (scans all files)
+  mkdir -p "$CALLER_PWD/notes"
+  cat > "$CALLER_PWD/notes/alpha.md" <<EOT
+---
+title: Alpha
+---
+alpha
+EOT
+  echo "orphan" > "$CALLER_PWD/notes/cafebabe"
+
+  run notes obfuscate
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to obfuscate"* ]]
+  [[ "$output" == *"cafebabe"* ]]
+
+  # alpha.md also shouldn't have been renamed (the guard aborts the operation)
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+}
+
+@test "obfuscate allows files with hex prefix but non-hex tail" {
+  # Don't false-positive on names that happen to start with hex
+  mkdir -p "$CALLER_PWD/notes"
+  cat > "$CALLER_PWD/notes/abc123xy.md" <<EOT
+---
+title: abc
+---
+content
+EOT
+
+  run notes obfuscate
+  [ "$status" -eq 0 ]
+  # File was renamed to a real hex id (manifest has entry)
+  [ -f "$CALLER_PWD/notes/.manifest" ]
+  grep -q "abc123xy.md" "$CALLER_PWD/notes/.manifest"
+}
+
+@test "obfuscate allows files whose basename is hex but has an extension" {
+  # `deadbeef.md` is a valid readable filename; guard only fires on bare 8-hex
+  mkdir -p "$CALLER_PWD/notes"
+  cat > "$CALLER_PWD/notes/deadbeef.md" <<EOT
+---
+title: Dead Beef
+---
+content
+EOT
+
+  run notes obfuscate
+  [ "$status" -eq 0 ]
+  grep -q "deadbeef.md" "$CALLER_PWD/notes/.manifest"
+}
