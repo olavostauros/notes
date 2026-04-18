@@ -391,8 +391,10 @@ EOT
   # No git-crypt init in repo_b — smudge will fail with a key-mismatch error.
 
   cd "$repo_b"
-  # Driver reads all three inputs through decrypt_if_needed; the first one
-  # (ancestor) will fail immediately.
+  # Driver calls normalize() on each of ancestor/ours/theirs; the first call
+  # fails at git-crypt smudge and `set -e` aborts the script. We pass the
+  # same encrypted blob for all three inputs since only the first will be
+  # read before the failure.
   run bash "$DRIVER" "$encrypted" "$encrypted" "$encrypted"
 
   [ "$status" -ne 0 ]
