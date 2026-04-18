@@ -830,3 +830,177 @@ EOF
   [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
   [[ "$(cat "$CALLER_PWD/notes/alpha.md")" != *"stale"* ]]
 }
+
+# ── Refuse re-obfuscation of already-hex-named files ──────────
+
+@test "obfuscate refuses files whose basename is an 8-hex id" {
+  # Simulate the broken state we saw on den/fold through April 2026:
+  # an obfuscated file exists on disk, but the manifest has lost its entry.
+  # Without this guard, `notes obfuscate` would treat the hex file as
+  # unobfuscated, generate a fresh random id, and create a duplicate blob.
+  mkdir -p "$CALLER_PWD/notes"
+  echo "---
+title: orphan" > "$CALLER_PWD/notes/deadbeef"
+  # No manifest entry for deadbeef — simulates the lost-mapping case
+
+  run notes obfuscate "deadbeef"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to obfuscate"* ]]
+  [[ "$output" == *"deadbeef"* ]]
+
+  # File must not have been renamed
+  [ -f "$CALLER_PWD/notes/deadbeef" ]
+}
+
+@test "obfuscate refuses hex-named file in full scan mode" {
+  # Same guard, but via unscoped `notes obfuscate` (scans all files)
+  mkdir -p "$CALLER_PWD/notes"
+  cat > "$CALLER_PWD/notes/alpha.md" <<EOT
+---
+title: Alpha
+---
+alpha
+EOT
+  echo "orphan" > "$CALLER_PWD/notes/cafebabe"
+
+  run notes obfuscate
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to obfuscate"* ]]
+  [[ "$output" == *"cafebabe"* ]]
+
+  # alpha.md also shouldn't have been renamed (the guard aborts the operation)
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+}
+
+@test "obfuscate allows files with hex prefix but non-hex tail" {
+  # Don't false-positive on names that happen to start with hex
+  mkdir -p "$CALLER_PWD/notes"
+  cat > "$CALLER_PWD/notes/abc123xy.md" <<EOT
+---
+title: abc
+---
+content
+EOT
+
+  run notes obfuscate
+  [ "$status" -eq 0 ]
+  # File was renamed to a real hex id (manifest has entry)
+  [ -f "$CALLER_PWD/notes/.manifest" ]
+  grep -q "abc123xy.md" "$CALLER_PWD/notes/.manifest"
+}
+
+@test "obfuscate allows files whose basename is hex but has an extension" {
+  # `deadbeef.md` is a valid readable filename; guard only fires on bare 8-hex
+  mkdir -p "$CALLER_PWD/notes"
+  cat > "$CALLER_PWD/notes/deadbeef.md" <<EOT
+---
+title: Dead Beef
+---
+content
+EOT
+
+  run notes obfuscate
+  [ "$status" -eq 0 ]
+  grep -q "deadbeef.md" "$CALLER_PWD/notes/.manifest"
+}
+
+@test "obfuscate refuses hex-named file in a subdirectory" {
+  # The guard uses basename(), so nested paths must still be caught.
+  mkdir -p "$CALLER_PWD/notes/sub"
+  echo "orphan" > "$CALLER_PWD/notes/sub/cafebabe"
+
+  run notes obfuscate "sub/cafebabe"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to obfuscate"* ]]
+  [[ "$output" == *"cafebabe"* ]]
+
+  # File must not have been renamed
+  [ -f "$CALLER_PWD/notes/sub/cafebabe" ]
+}
+
+@test "obfuscate hex guard: uppercase basename behavior" {
+  # The guard regex is lowercase-only ([a-f0-9]). On a case-insensitive
+  # filesystem (macOS APFS default, NTFS), 'DEADBEEF' and 'deadbeef' collide
+  # — the guard won't fire because uppercase doesn't match, even though
+  # the file on disk is the same as an obfuscated lowercase name.
+  # On a case-sensitive filesystem, they're truly different files and the
+  # uppercase one is just a regular filename.
+  #
+  # This test documents the contract: the guard fires only on lowercase
+  # hex. If the ID generator ever produces uppercase, or if we want to
+  # catch the case-insensitive-FS collision, the regex must change.
+  mkdir -p "$CALLER_PWD/notes"
+  echo "uppercase" > "$CALLER_PWD/notes/DEADBEEF"
+  # No .md extension; basename is 8 chars of uppercase hex
+  # Note: the note has no title in frontmatter, which is fine — we're testing
+  # the guard path, not frontmatter parsing.
+  cat > "$CALLER_PWD/notes/DEADBEEF" <<'EOT'
+---
+title: deadbeef
+---
+content
+EOT
+
+  run notes obfuscate "DEADBEEF"
+  # Current behavior: uppercase passes through — guard doesn't fire, file
+  # gets a fresh random obfuscated ID.
+  [ "$status" -eq 0 ]
+  # The original uppercase file is renamed (disappeared)
+  [ ! -f "$CALLER_PWD/notes/DEADBEEF" ]
+  # A new obfuscated entry exists in the manifest
+  grep -q "DEADBEEF" "$CALLER_PWD/notes/.manifest" || fail "expected manifest entry for DEADBEEF"
+}
+
+@test "obfuscate hex guard: 7-char and 9-char hex pass through" {
+  # The guard is {8}, not {7,} or {8,}. Files whose basenames are hex but
+  # the wrong length are treated as normal readable filenames. This locks
+  # in the boundary in case anyone 'improves' the regex without thinking.
+  mkdir -p "$CALLER_PWD/notes"
+  cat > "$CALLER_PWD/notes/abcdef0" <<'EOT'
+---
+title: seven-char
+---
+EOT
+  cat > "$CALLER_PWD/notes/abcdef012" <<'EOT'
+---
+title: nine-char
+---
+EOT
+
+  run notes obfuscate
+  [ "$status" -eq 0 ]
+  # Both files got renamed to obfuscated IDs (guard didn't fire)
+  [ ! -f "$CALLER_PWD/notes/abcdef0" ]
+  [ ! -f "$CALLER_PWD/notes/abcdef012" ]
+  grep -q "abcdef0$" "$CALLER_PWD/notes/.manifest" || fail "expected 7-char entry in manifest"
+  grep -q "abcdef012$" "$CALLER_PWD/notes/.manifest" || fail "expected 9-char entry in manifest"
+}
+
+@test "obfuscate hex guard: multiple hex-named orphans in full-scan mode (first-hit-only)" {
+  # If several hex-named files exist, the guard fires on the first and
+  # aborts the entire rename_to_obfuscated call. This documents that
+  # behavior: the error message only names ONE of the orphans — the user
+  # must iterate. If that changes (e.g., we collect all violations before
+  # failing), this test will notice.
+  mkdir -p "$CALLER_PWD/notes"
+  echo "orphan1" > "$CALLER_PWD/notes/deadbeef"
+  echo "orphan2" > "$CALLER_PWD/notes/cafebabe"
+  cat > "$CALLER_PWD/notes/real.md" <<'EOT'
+---
+title: real
+---
+EOT
+
+  run notes obfuscate
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to obfuscate"* ]]
+  # At least one of the two orphans is named in the error
+  if [[ "$output" != *"deadbeef"* ]] && [[ "$output" != *"cafebabe"* ]]; then
+    fail "expected at least one orphan name in error: $output"
+  fi
+  # Neither orphan was renamed — the operation aborted
+  [ -f "$CALLER_PWD/notes/deadbeef" ]
+  [ -f "$CALLER_PWD/notes/cafebabe" ]
+  # And real.md wasn't obfuscated either (fail-fast = no partial state)
+  [ -f "$CALLER_PWD/notes/real.md" ]
+}

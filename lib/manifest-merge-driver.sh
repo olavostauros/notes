@@ -32,9 +32,49 @@ THEIRS="$3"    # %B — branch being merged
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# Normalize: strip blank lines, sort by name
+# Git invokes merge drivers with index content, which for git-crypt-tracked
+# files is the encrypted ciphertext (starting with the 10-byte header
+# "\0GITCRYPT\0"). We need plaintext to merge.
+#
+# If the file is encrypted, decrypt it through git-crypt's smudge filter. If
+# smudge fails (repo locked, git-crypt not installed), this is a hard error
+# — we exit non-zero with a diagnostic. The calling `set -eo pipefail` will
+# abort the driver, which leaves `ours` unchanged. That's the right
+# behavior: git then surfaces a merge conflict on the manifest, and the
+# user is forced to investigate rather than silently accepting a corrupted
+# merged manifest.
+decrypt_if_needed() {
+  local src="$1" dst="$2"
+  if [ ! -s "$src" ]; then
+    : > "$dst"
+    return 0
+  fi
+  # git-crypt files begin with the 10-byte header \0 G I T C R Y P T \0.
+  # Bash strings can't hold the leading \0 (it terminates the string), so
+  # read bytes 2-9 and check they spell "GITCRYPT". Files shorter than 9
+  # bytes safely fall through — `dd` returns < 8 bytes, the header won't
+  # match, and we treat it as plaintext.
+  local header
+  header=$(dd if="$src" bs=1 skip=1 count=8 2>/dev/null)
+  if [ "$header" = "GITCRYPT" ]; then
+    if ! git-crypt smudge < "$src" > "$dst" 2>/dev/null; then
+      echo "manifest-merge-driver: git-crypt smudge failed on $src — is the repo unlocked?" >&2
+      echo "manifest-merge-driver: aborting merge to avoid producing a corrupt manifest." >&2
+      return 1
+    fi
+  else
+    cp "$src" "$dst"
+  fi
+}
+
+# Normalize: decrypt if encrypted, strip blank lines, sort by name.
+# Uses $WORK (bound in the outer scope) for temp files so cleanup is tied
+# to the outer trap.
 normalize() {
-  grep -v '^$' "$1" 2>/dev/null | sort -t$'\t' -k2 || true
+  local src="$1" plaintext
+  plaintext=$(mktemp "$WORK/plain.XXXXXX")
+  decrypt_if_needed "$src" "$plaintext" || return 1
+  grep -v '^$' "$plaintext" 2>/dev/null | sort -t$'\t' -k2 || true
 }
 
 normalize "$ANCESTOR" > "$WORK/anc"

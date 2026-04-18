@@ -2,6 +2,41 @@
 # obfuscate.sh — Layer 1: Filesystem + Manifest operations
 # Pure renames + manifest updates. No git staging, no suppression.
 
+# Refuse to proceed if a filename's basename looks like an obfuscated id.
+# An obfuscated id is 8 lowercase hex characters with no extension.
+#
+# Callers rely on `manifest_has_id` to detect "already obfuscated, skip." If
+# the manifest is inconsistent (stale, lost entries, orphan blobs), that
+# check can miss and the file would be re-obfuscated under a new random id,
+# creating a duplicate blob and masking the underlying problem. Better to
+# fail loudly and make the user investigate.
+#
+# Returns 0 (proceed) if the basename is a normal filename.
+# Returns 1 (stop) and prints diagnostic to stderr if it looks obfuscated.
+refuse_if_hex_basename() {
+  local relpath="$1"
+  local base
+  base=$(basename "$relpath")
+  if [[ "$base" =~ ^[a-f0-9]{8}$ ]]; then
+    cat >&2 <<EOF
+Error: refusing to obfuscate '$relpath' — basename looks like an obfuscated id.
+
+  This indicates the manifest is inconsistent with the working tree. Possible
+  causes:
+    - Stale manifest that lost the mapping for an already-obfuscated file
+    - Orphan obfuscated blob with no manifest entry
+    - Readable file created with a hash-shaped name (unusual)
+
+  Re-obfuscating would create a duplicate blob under a fresh random id and
+  hide the underlying problem. Fix the manifest first, then retry.
+
+  Diagnose with: notes status, notes changes
+EOF
+    return 1
+  fi
+  return 0
+}
+
 # Rename readable files to obfuscated IDs.
 # Outputs "<relpath>\t<id>" per renamed file (for callers to stage).
 # Usage: rename_to_obfuscated <notes_dir> [file...]
@@ -26,6 +61,15 @@ rename_to_obfuscated() {
         continue  # already obfuscated
       fi
 
+      # Refuse to obfuscate a file whose basename already looks like an
+      # obfuscated id (8 hex chars, no extension). This only happens when
+      # the manifest is inconsistent with the working tree — e.g., a stale
+      # manifest lost the mapping for an already-obfuscated file, or an
+      # orphan obfuscated blob exists without an entry. Re-obfuscating
+      # would create a duplicate blob under a fresh random id and hide
+      # the real problem (as happened on den/fold through April 2026).
+      refuse_if_hex_basename "$relpath" || return 1
+
       local existing_id
       existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
       if [ -n "$existing_id" ]; then
@@ -45,6 +89,8 @@ rename_to_obfuscated() {
       if manifest_has_id "$manifest" "$base"; then
         continue
       fi
+
+      refuse_if_hex_basename "$relpath" || return 1
 
       local existing_id
       existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
