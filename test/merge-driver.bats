@@ -401,3 +401,178 @@ EOT
   [[ "$output" == *"git-crypt smudge failed"* ]]
   [[ "$output" == *"aborting merge"* ]]
 }
+
+@test "merge driver: encrypted inputs with conflicting ID changes produces conflict markers" {
+  # The existing encrypted test exercises union (additions). The conflict
+  # path (both sides change the same name to different IDs) has plaintext
+  # coverage but was never exercised with encrypted inputs. A subtle
+  # decryption bug could misclassify conflict vs. agreement here.
+  if ! command -v git-crypt >/dev/null; then
+    skip "git-crypt not installed"
+  fi
+
+  local repo="$BATS_TEST_TMPDIR/conflict-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  ( cd "$repo" && git-crypt init >/dev/null 2>&1 ) || skip "git-crypt init failed"
+  cat > "$repo/.gitattributes" <<EOT
+notes/.manifest filter=git-crypt diff=git-crypt
+EOT
+  mkdir -p "$repo/notes"
+
+  # Ancestor: alpha.md + beta.md at known IDs
+  cat > "$repo/notes/.manifest" <<EOT
+aaa00001	alpha.md
+bbb00001	beta.md
+EOT
+  git -C "$repo" add .gitattributes notes/.manifest
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "init"
+  local enc_anc="$BATS_TEST_TMPDIR/enc_anc"
+  git -C "$repo" cat-file -p "HEAD:notes/.manifest" > "$enc_anc"
+
+  # Ours changes beta's ID
+  cat > "$repo/notes/.manifest" <<EOT
+aaa00001	alpha.md
+ddd00001	beta.md
+EOT
+  git -C "$repo" add notes/.manifest
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "ours"
+  local enc_ours="$BATS_TEST_TMPDIR/enc_ours"
+  git -C "$repo" cat-file -p "HEAD:notes/.manifest" > "$enc_ours"
+
+  # Theirs changes beta's ID differently
+  cat > "$repo/notes/.manifest" <<EOT
+aaa00001	alpha.md
+eee00001	beta.md
+EOT
+  git -C "$repo" add notes/.manifest
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "theirs"
+  local enc_theirs="$BATS_TEST_TMPDIR/enc_theirs"
+  git -C "$repo" cat-file -p "HEAD:notes/.manifest" > "$enc_theirs"
+
+  cd "$repo"
+  run bash "$DRIVER" "$enc_anc" "$enc_ours" "$enc_theirs"
+
+  # Conflict → non-zero exit
+  [ "$status" -eq 1 ]
+  # Result has conflict markers for beta (both IDs present)
+  grep -qF "ddd00001" "$enc_ours" || fail "missing ours's ID: $(cat "$enc_ours")"
+  grep -qF "eee00001" "$enc_ours" || fail "missing theirs's ID"
+  grep -qF "<<<<<<<" "$enc_ours" || fail "missing conflict marker"
+  # alpha.md is un-conflicted
+  grep -qF "alpha.md" "$enc_ours" || fail "missing alpha.md"
+}
+
+@test "merge driver: empty ancestor with encrypted ours and encrypted theirs" {
+  # When two branches independently create a manifest (no common ancestor
+  # version of the file), git passes an empty file as %O. The early-return
+  # in decrypt_if_needed for zero-byte files must interact correctly with
+  # subsequent decryption of ours + theirs.
+  if ! command -v git-crypt >/dev/null; then
+    skip "git-crypt not installed"
+  fi
+
+  local repo="$BATS_TEST_TMPDIR/empty-anc-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  ( cd "$repo" && git-crypt init >/dev/null 2>&1 ) || skip "git-crypt init failed"
+  cat > "$repo/.gitattributes" <<EOT
+notes/.manifest filter=git-crypt diff=git-crypt
+EOT
+  mkdir -p "$repo/notes"
+
+  # Ours: has alpha
+  cat > "$repo/notes/.manifest" <<EOT
+aaa00001	alpha.md
+EOT
+  git -C "$repo" add .gitattributes notes/.manifest
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "ours"
+  local enc_ours="$BATS_TEST_TMPDIR/enc_ours"
+  git -C "$repo" cat-file -p "HEAD:notes/.manifest" > "$enc_ours"
+
+  # Theirs: has beta
+  cat > "$repo/notes/.manifest" <<EOT
+bbb00001	beta.md
+EOT
+  git -C "$repo" add notes/.manifest
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "theirs"
+  local enc_theirs="$BATS_TEST_TMPDIR/enc_theirs"
+  git -C "$repo" cat-file -p "HEAD:notes/.manifest" > "$enc_theirs"
+
+  # Empty ancestor
+  local empty_anc="$BATS_TEST_TMPDIR/empty_anc"
+  : > "$empty_anc"
+
+  cd "$repo"
+  run bash "$DRIVER" "$empty_anc" "$enc_ours" "$enc_theirs"
+  [ "$status" -eq 0 ]
+
+  grep -qF "alpha.md" "$enc_ours" || fail "missing alpha.md"
+  grep -qF "beta.md"  "$enc_ours" || fail "missing beta.md"
+}
+
+@test "merge driver: mixed encrypted + plaintext inputs merge normally" {
+  # per-file decryption means we shouldn't break if one input happens to be
+  # plaintext (e.g., a branch committed before filter=git-crypt took effect).
+  if ! command -v git-crypt >/dev/null; then
+    skip "git-crypt not installed"
+  fi
+
+  local repo="$BATS_TEST_TMPDIR/mixed-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  ( cd "$repo" && git-crypt init >/dev/null 2>&1 ) || skip "git-crypt init failed"
+  cat > "$repo/.gitattributes" <<EOT
+notes/.manifest filter=git-crypt diff=git-crypt
+EOT
+  mkdir -p "$repo/notes"
+
+  # Encrypted ancestor + encrypted ours
+  cat > "$repo/notes/.manifest" <<EOT
+aaa00001	alpha.md
+EOT
+  git -C "$repo" add .gitattributes notes/.manifest
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "init"
+  local enc_anc="$BATS_TEST_TMPDIR/enc_anc"
+  git -C "$repo" cat-file -p "HEAD:notes/.manifest" > "$enc_anc"
+
+  cat > "$repo/notes/.manifest" <<EOT
+aaa00001	alpha.md
+ccc00001	gamma.md
+EOT
+  git -C "$repo" add notes/.manifest
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "ours"
+  local enc_ours="$BATS_TEST_TMPDIR/enc_ours"
+  git -C "$repo" cat-file -p "HEAD:notes/.manifest" > "$enc_ours"
+
+  # Plaintext theirs (hand-authored, not encrypted)
+  local plain_theirs="$BATS_TEST_TMPDIR/plain_theirs"
+  cat > "$plain_theirs" <<EOT
+aaa00001	alpha.md
+ddd00001	delta.md
+EOT
+
+  cd "$repo"
+  run bash "$DRIVER" "$enc_anc" "$enc_ours" "$plain_theirs"
+  [ "$status" -eq 0 ]
+
+  grep -qF "alpha.md" "$enc_ours" || fail "missing alpha.md"
+  grep -qF "gamma.md" "$enc_ours" || fail "missing gamma.md (from encrypted ours)"
+  grep -qF "delta.md" "$enc_ours" || fail "missing delta.md (from plaintext theirs)"
+}
+
+@test "merge driver: files shorter than 9 bytes are treated as plaintext" {
+  # The dd bs=1 skip=1 count=8 check for the GITCRYPT header reads bytes
+  # 2-9. Files shorter than 9 bytes return fewer bytes from dd, the header
+  # won't match, and the driver falls through to the plaintext path.
+  # Documented in the driver's comment, never regression-tested.
+  echo -e "a\tx" > "$ANCESTOR"   # 4 bytes
+  echo -e "a\tx\nb\ty" > "$OURS" # 8 bytes
+  echo -e "a\tx\nc\tz" > "$THEIRS" # 8 bytes
+
+  run bash "$DRIVER" "$ANCESTOR" "$OURS" "$THEIRS"
+  [ "$status" -eq 0 ]
+  grep -qF "a	x" "$OURS" || fail "missing a"
+  grep -qF "b	y" "$OURS" || fail "missing b"
+  grep -qF "c	z" "$OURS" || fail "missing c"
+}
