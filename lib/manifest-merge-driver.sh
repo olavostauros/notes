@@ -37,10 +37,12 @@ trap 'rm -rf "$WORK"' EXIT
 # "\0GITCRYPT\0"). We need plaintext to merge.
 #
 # If the file is encrypted, decrypt it through git-crypt's smudge filter. If
-# smudge fails (repo locked, git-crypt not installed), fall back to the raw
-# content so the merge attempt isn't fatal — but it will almost certainly
-# produce a conflict or empty result, which is more visible than silently
-# dropping the manifest.
+# smudge fails (repo locked, git-crypt not installed), this is a hard error
+# — we exit non-zero with a diagnostic. The calling `set -eo pipefail` will
+# abort the driver, which leaves `ours` unchanged. That's the right
+# behavior: git then surfaces a merge conflict on the manifest, and the
+# user is forced to investigate rather than silently accepting a corrupted
+# merged manifest.
 decrypt_if_needed() {
   local src="$1" dst="$2"
   if [ ! -s "$src" ]; then
@@ -49,13 +51,15 @@ decrypt_if_needed() {
   fi
   # git-crypt files begin with the 10-byte header \0 G I T C R Y P T \0.
   # Bash strings can't hold the leading \0 (it terminates the string), so
-  # read bytes 2-9 and check they spell "GITCRYPT".
+  # read bytes 2-9 and check they spell "GITCRYPT". Files shorter than 9
+  # bytes safely fall through — `dd` returns < 8 bytes, the header won't
+  # match, and we treat it as plaintext.
   local header
   header=$(dd if="$src" bs=1 skip=1 count=8 2>/dev/null)
   if [ "$header" = "GITCRYPT" ]; then
     if ! git-crypt smudge < "$src" > "$dst" 2>/dev/null; then
       echo "manifest-merge-driver: git-crypt smudge failed on $src — is the repo unlocked?" >&2
-      cp "$src" "$dst"
+      echo "manifest-merge-driver: aborting merge to avoid producing a corrupt manifest." >&2
       return 1
     fi
   else
@@ -63,13 +67,14 @@ decrypt_if_needed() {
   fi
 }
 
-# Normalize: decrypt if encrypted, strip blank lines, sort by name
+# Normalize: decrypt if encrypted, strip blank lines, sort by name.
+# Uses $WORK (bound in the outer scope) for temp files so cleanup is tied
+# to the outer trap.
 normalize() {
   local src="$1" plaintext
-  plaintext=$(mktemp)
+  plaintext=$(mktemp "$WORK/plain.XXXXXX")
   decrypt_if_needed "$src" "$plaintext" || return 1
   grep -v '^$' "$plaintext" 2>/dev/null | sort -t$'\t' -k2 || true
-  rm -f "$plaintext"
 }
 
 normalize "$ANCESTOR" > "$WORK/anc"

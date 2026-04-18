@@ -903,3 +903,17 @@ EOT
   [ "$status" -eq 0 ]
   grep -q "deadbeef.md" "$CALLER_PWD/notes/.manifest"
 }
+
+@test "obfuscate refuses hex-named file in a subdirectory" {
+  # The guard uses basename(), so nested paths must still be caught.
+  mkdir -p "$CALLER_PWD/notes/sub"
+  echo "orphan" > "$CALLER_PWD/notes/sub/cafebabe"
+
+  run notes obfuscate "sub/cafebabe"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to obfuscate"* ]]
+  [[ "$output" == *"cafebabe"* ]]
+
+  # File must not have been renamed
+  [ -f "$CALLER_PWD/notes/sub/cafebabe" ]
+}

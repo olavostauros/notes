@@ -247,7 +247,7 @@ setup() {
   ! grep -qF "bbb00001" "$OURS"
 }
 
-# ── git-crypt integration (notes#???) ─────────────────────────
+# ── git-crypt integration (notes#48) ──────────────────────────
 #
 # Regression: git invokes the merge driver with index content, which for
 # git-crypt-tracked files is the encrypted ciphertext (10-byte header
@@ -318,7 +318,10 @@ EOT
   git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "theirs"
   git -C "$repo" cat-file -p "HEAD:notes/.manifest" > "$encrypted_theirs"
 
-  # Run the merge driver from inside the repo (git-crypt needs access to keys)
+  # Run the merge driver from inside the repo (git-crypt needs access to
+  # keys). `run` has to execute in the calling shell to set $status/$output,
+  # so we cd into the repo here. Tests after this one should only rely on
+  # setup()'s absolute-path helpers ($TARGET_DIR, $BATS_TEST_TMPDIR).
   cd "$repo"
   run bash "$DRIVER" "$encrypted_anc" "$encrypted_ours" "$encrypted_theirs"
 
@@ -350,4 +353,49 @@ EOT
   grep -qF "alpha.md" "$OURS"
   grep -qF "beta.md"  "$OURS"
   grep -qF "gamma.md" "$OURS"
+}
+
+@test "merge driver: fails loudly when git-crypt smudge cannot decrypt" {
+  # If git-crypt is locked (or keys are missing), smudge fails. The driver
+  # must exit non-zero with a diagnostic rather than silently writing garbage
+  # — letting git produce a visible merge conflict that forces investigation.
+  if ! command -v git-crypt >/dev/null; then
+    skip "git-crypt not installed"
+  fi
+
+  # Set up repo A with git-crypt, produce an encrypted blob.
+  local repo_a="$BATS_TEST_TMPDIR/repo-a"
+  mkdir -p "$repo_a"
+  git -C "$repo_a" init -q
+  ( cd "$repo_a" && git-crypt init >/dev/null 2>&1 ) || skip "git-crypt init failed"
+  cat > "$repo_a/.gitattributes" <<EOT
+notes/.manifest filter=git-crypt diff=git-crypt
+EOT
+  mkdir -p "$repo_a/notes"
+  echo "aaa00001	alpha.md" > "$repo_a/notes/.manifest"
+  git -C "$repo_a" add .gitattributes notes/.manifest
+  git -C "$repo_a" -c user.email=t@t -c user.name=t commit -qm "init"
+
+  # Extract the encrypted blob.
+  local encrypted="$BATS_TEST_TMPDIR/enc"
+  git -C "$repo_a" cat-file -p "HEAD:notes/.manifest" > "$encrypted"
+  # Sanity: it really is encrypted
+  local header
+  header=$(dd if="$encrypted" bs=1 skip=1 count=8 2>/dev/null)
+  [ "$header" = "GITCRYPT" ] || fail "expected encrypted content"
+
+  # Now run the driver from repo B which has no git-crypt keys for repo A.
+  local repo_b="$BATS_TEST_TMPDIR/repo-b"
+  mkdir -p "$repo_b"
+  git -C "$repo_b" init -q
+  # No git-crypt init in repo_b — smudge will fail with a key-mismatch error.
+
+  cd "$repo_b"
+  # Driver reads all three inputs through decrypt_if_needed; the first one
+  # (ancestor) will fail immediately.
+  run bash "$DRIVER" "$encrypted" "$encrypted" "$encrypted"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"git-crypt smudge failed"* ]]
+  [[ "$output" == *"aborting merge"* ]]
 }
