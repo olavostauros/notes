@@ -418,14 +418,20 @@ EOF
 
 # --- Pre-commit hook behavior ---
 
+# These tests exercise the pre-commit hook directly. Auto-obfuscate is the
+# default hook mode; using `git commit` during setup would fire the hook and
+# obfuscate files behind the test's back, leaving nothing for the explicit
+# `notes obfuscate` step to do. Use --no-verify on setup commits to keep the
+# tests in control of when obfuscation happens.
+
 @test "pre-commit hook rejects un-obfuscated files in guard mode" {
   notes setup
   git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q -m "setup"
+  git -C "$CALLER_PWD" commit --no-verify -q -m "setup"
 
   notes obfuscate
   git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q -m "obfuscated"
+  git -C "$CALLER_PWD" commit --no-verify -q -m "obfuscated"
 
   echo -e "---\ntitle: Sneaky\n---\n# Sneaky" > "$CALLER_PWD/notes/sneaky.md"
   git -C "$CALLER_PWD" add notes/sneaky.md
@@ -439,7 +445,7 @@ EOF
 @test "pre-commit hook allows obfuscated files" {
   notes setup
   git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q -m "setup"
+  git -C "$CALLER_PWD" commit --no-verify -q -m "setup"
 
   notes obfuscate
   git -C "$CALLER_PWD" add -A
@@ -451,20 +457,24 @@ EOF
 @test "pre-commit hook rejects staged renames in guard mode" {
   notes setup
   git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q -m "setup"
+  git -C "$CALLER_PWD" commit --no-verify -q -m "setup"
 
   notes obfuscate
   git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q -m "obfuscated"
+  git -C "$CALLER_PWD" commit --no-verify -q -m "obfuscated"
 
-  # Deobfuscate locally, then manually stage readable names
-  notes deobfuscate
-  git -C "$CALLER_PWD" add notes/
+  # After committing the obfuscated state, the post-commit hook
+  # deobfuscates the working tree and adds readable names to
+  # .git/info/exclude (clean-status mechanism from notes#43). A plain
+  # `git add notes/` now no-ops. To simulate someone trying to stage a
+  # deobfuscated rename anyway, we force-add the readable name.
+  git -C "$CALLER_PWD" add -f notes/alpha.md
 
   # The hook should reject this in guard mode
   NOTES_OBFUSCATE_HOOK=guard run git -C "$CALLER_PWD" commit -m "should fail"
   [ "$status" -ne 0 ]
   [[ "$output" == *"non-obfuscated filenames"* ]]
+  [[ "$output" == *"alpha.md"* ]]
 }
 
 @test "pre-commit hook auto-obfuscates by default" {
