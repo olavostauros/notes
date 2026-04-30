@@ -83,17 +83,36 @@ elif [ $rc -ne 0 ]; then
   exit $rc
 fi
 
-# Stage the results: add obfuscated files, remove readable names from index
+manifest_entry_matches_head() {
+  local id="$1" relpath="$2"
+  git -C "$TARGET_DIR" cat-file --filters "HEAD:$notes_dir/.manifest" 2>/dev/null \
+    | awk -F '\t' -v id="$id" -v relpath="$relpath" '
+        $1 == id && $2 == relpath { found=1 }
+        END { exit found ? 0 : 1 }
+      '
+}
+
+# Stage the results: add obfuscated files, remove readable names from index.
+# In full mode, stage the manifest normally. In scoped mode, stage it only when
+# one of the scoped files needs a manifest update in HEAD. This prevents an
+# unrelated uncommitted manifest entry (for a skipped new note) from leaking into
+# a commit when the pre-commit hook obfuscates a modified known note.
 new_count=0
+stage_manifest=false
+[ ${#ARGS[@]} -eq 0 ] && stage_manifest=true
 while IFS=$'\t' read -r relpath id; do
   git -C "$TARGET_DIR" add "$notes_dir/$id"
   git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$relpath" 2>/dev/null || true
+  if ! manifest_entry_matches_head "$id" "$relpath"; then
+    stage_manifest=true
+  fi
   echo "  $relpath → $id"
   ((new_count++)) || true
 done <<< "$output"
 
-# Stage manifest
-git -C "$TARGET_DIR" add "$manifest"
+if $stage_manifest; then
+  git -C "$TARGET_DIR" add "$manifest"
+fi
 
 echo ""
 echo "Manifest written: $manifest"

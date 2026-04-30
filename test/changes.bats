@@ -269,6 +269,31 @@ setup() {
   [[ "$output" != *"notes/beta.md"* ]]
 }
 
+@test "notes stage: skipped new manifest entry does not leak through pre-commit hook" {
+  source "$MISE_CONFIG_ROOT/lib/hooks.sh"
+  install_obfuscation_hook
+  install_deobfuscation_hook
+
+  echo "# Gamma" > "$CALLER_PWD/notes/gamma.md"
+  printf 'cccccccc\tgamma.md\n' >> "$MANIFEST"
+  echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
+
+  run notes stage
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: alpha.md"* ]]
+  [[ "$output" == *"Skipped 1 new note(s)"* ]]
+  [[ "$output" == *"new: gamma.md"* ]]
+
+  git -C "$CALLER_PWD" commit -q -m "update alpha"
+
+  run git -C "$CALLER_PWD" cat-file --filters HEAD:notes/.manifest
+  [[ "$output" == *"alpha.md"* ]]
+  [[ "$output" != *"gamma.md"* ]]
+
+  run git -C "$CALLER_PWD" show --name-only --format= HEAD
+  [[ "$output" != *"gamma"* ]]
+}
+
 # ── full lifecycle ────────────────────────────────────────────
 
 @test "full cycle: edit → stage → commit → clean status" {
