@@ -205,6 +205,95 @@ setup() {
   [[ "$output" == *"alpha.md"* ]]
 }
 
+@test "notes stage: no args skips new notes but stages modified notes" {
+  echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
+  echo "# Gamma" > "$CALLER_PWD/notes/gamma.md"
+
+  run notes stage
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: alpha.md"* ]]
+  [[ "$output" == *"Skipped 1 new note(s)"* ]]
+  [[ "$output" == *"new: gamma.md"* ]]
+
+  run git -C "$CALLER_PWD" diff --cached --name-only
+  [[ "$output" == *"notes/alpha.md"* ]]
+  [[ "$output" != *"notes/gamma.md"* ]]
+}
+
+@test "notes stage: explicit file stages a new note" {
+  echo "# Gamma" > "$CALLER_PWD/notes/gamma.md"
+
+  run notes stage gamma.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: gamma.md"* ]]
+
+  run git -C "$CALLER_PWD" diff --cached --name-only
+  [[ "$output" == *"notes/gamma.md"* ]]
+}
+
+@test "notes stage: no args skips readable files left from another branch" {
+  local repo="$BATS_TEST_TMPDIR/branch-repo"
+  mkdir -p "$repo/notes"
+  git -C "$repo" init -q -b main
+  git -C "$repo" config user.name "Test"
+  git -C "$repo" config user.email "test@test.com"
+
+  echo "# Alpha" > "$repo/notes/alpha.md"
+  rename_to_obfuscated "$repo/notes" > /dev/null
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "add alpha"
+  rename_to_readable "$repo/notes" > /dev/null
+  set_status_suppression "$repo/notes"
+
+  git -C "$repo" branch feature
+
+  echo "# Beta" > "$repo/notes/beta.md"
+  rename_to_obfuscated "$repo/notes" > /dev/null
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "add beta on main"
+  rename_to_readable "$repo/notes" > /dev/null
+  set_status_suppression "$repo/notes"
+
+  git -C "$repo" checkout -q feature
+  [ -f "$repo/notes/beta.md" ]
+  echo "alpha edit" >> "$repo/notes/alpha.md"
+
+  CALLER_PWD="$repo" run notes stage
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: alpha.md"* ]]
+  [[ "$output" == *"Skipped 1 new note(s)"* ]]
+  [[ "$output" == *"new: beta.md"* ]]
+
+  run git -C "$repo" diff --cached --name-only
+  [[ "$output" == *"notes/alpha.md"* ]]
+  [[ "$output" != *"notes/beta.md"* ]]
+}
+
+@test "notes stage: skipped new manifest entry does not leak through pre-commit hook" {
+  source "$MISE_CONFIG_ROOT/lib/hooks.sh"
+  install_obfuscation_hook
+  install_deobfuscation_hook
+
+  echo "# Gamma" > "$CALLER_PWD/notes/gamma.md"
+  printf 'cccccccc\tgamma.md\n' >> "$MANIFEST"
+  echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
+
+  run notes stage
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: alpha.md"* ]]
+  [[ "$output" == *"Skipped 1 new note(s)"* ]]
+  [[ "$output" == *"new: gamma.md"* ]]
+
+  git -C "$CALLER_PWD" commit -q -m "update alpha"
+
+  run git -C "$CALLER_PWD" cat-file --filters HEAD:notes/.manifest
+  [[ "$output" == *"alpha.md"* ]]
+  [[ "$output" != *"gamma.md"* ]]
+
+  run git -C "$CALLER_PWD" show --name-only --format= HEAD
+  [[ "$output" != *"gamma"* ]]
+}
+
 # ── full lifecycle ────────────────────────────────────────────
 
 @test "full cycle: edit → stage → commit → clean status" {
