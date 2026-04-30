@@ -236,7 +236,7 @@ setup_encrypted_repo_with_obfuscation() {
   grep -q "plain note" "$TARGET_DIR/notes/plain.md"
 }
 
-@test "lock without manifest does not attempt obfuscation" {
+@test "lock obfuscates when setup-created manifest exists" {
   notes setup
 
   local fpr
@@ -248,9 +248,15 @@ setup_encrypted_repo_with_obfuscation() {
   git -C "$TARGET_DIR" add .
   git -C "$TARGET_DIR" commit -q -m "Add note"
 
+  # Capture the manifest entry while unlocked; lock encrypts .manifest too.
+  local id
+  id=$(awk '$2 == "plain.md" { print $1 }' "$TARGET_DIR/notes/.manifest")
+  [ -n "$id" ]
+
   run notes lock
   [ "$status" -eq 0 ]
 
-  # File should still have original name (just encrypted)
-  [ -f "$TARGET_DIR/notes/plain.md" ]
+  # setup creates .manifest, so lock should keep the committed obfuscated shape.
+  [ ! -f "$TARGET_DIR/notes/plain.md" ]
+  [ -f "$TARGET_DIR/notes/$id" ]
 }
