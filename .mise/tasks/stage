@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-#MISE description="Stage changed notes for commit (bypasses exclude)"
+#MISE description="Stage notes for commit (bypasses exclude)"
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--dry-run" help="Show what would be staged without doing it"
-#USAGE arg "[files]..." help="Specific notes to stage (readable names, relative to notes dir). Omit for all changed."
+#USAGE arg "[files]..." help="Specific notes to stage (readable names, relative to notes dir). Omit to stage modified/deleted only; new notes require explicit files."
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -35,10 +35,29 @@ if [ -z "$changes" ]; then
   exit 0
 fi
 
-# Filter and collect files to stage
+# Filter and collect files to stage. With no explicit file arguments, stage only
+# modifications/deletions (git add -u semantics). New notes must be staged
+# explicitly so stale readable files left by a different branch cannot silently
+# enter the next commit.
+explicit_files=false
+if [ ${#ARGS[@]} -gt 0 ] && [ -n "${ARGS[0]}" ]; then
+  explicit_files=true
+fi
+
 to_stage=()
+skipped_new=()
+
+print_skipped_new() {
+  [ ${#skipped_new[@]} -eq 0 ] && return 0
+
+  echo "Skipped ${#skipped_new[@]} new note(s). Stage explicitly with: notes stage <file>"
+  for relpath in "${skipped_new[@]}"; do
+    echo "  new: $relpath"
+  done
+}
+
 while IFS=$'\t' read -r status relpath; do
-  if [ ${#ARGS[@]} -gt 0 ] && [ -n "${ARGS[0]}" ]; then
+  if $explicit_files; then
     match=false
     for f in "${ARGS[@]}"; do
       [ "$f" = "$relpath" ] && match=true && break
@@ -47,8 +66,15 @@ while IFS=$'\t' read -r status relpath; do
   fi
 
   case "$status" in
-    modified|new)
+    modified)
       to_stage+=("$relpath")
+      ;;
+    new)
+      if $explicit_files; then
+        to_stage+=("$relpath")
+      else
+        skipped_new+=("$relpath")
+      fi
       ;;
     deleted)
       # For deleted notes, we need to remove the obfuscated file from the index
@@ -59,6 +85,7 @@ done <<< "$changes"
 
 if [ ${#to_stage[@]} -eq 0 ]; then
   echo "No changes to stage."
+  print_skipped_new
   exit 0
 fi
 
@@ -67,6 +94,7 @@ if [ "${usage_dry_run:-}" = "true" ]; then
   for relpath in "${to_stage[@]}"; do
     echo "  $relpath"
   done
+  print_skipped_new
   exit 0
 fi
 
@@ -92,3 +120,4 @@ done
 
 echo ""
 echo "Staged $staged file(s). Run 'git commit' to commit."
+print_skipped_new
