@@ -74,12 +74,39 @@ setup() {
 }
 
 @test "obfuscate dry-run shows plan without renaming" {
-  run notes obfuscate -- --dry-run
+  run notes obfuscate --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"alpha.md"* ]]
 
   [ -f "$CALLER_PWD/notes/alpha.md" ]
   [ ! -f "$CALLER_PWD/notes/.manifest" ]
+}
+
+@test "scoped obfuscate dry-run shows existing manifest ID for readable file" {
+  notes obfuscate
+  alpha_id=$(grep $'\talpha\.md$' "$CALLER_PWD/notes/.manifest" | cut -f1)
+
+  notes deobfuscate
+
+  run notes obfuscate --dry-run alpha.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"alpha.md → $alpha_id"* ]]
+  [[ "$output" != *"alpha.md → (will be assigned)"* ]]
+
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+  [ ! -f "$CALLER_PWD/notes/$alpha_id" ]
+}
+
+@test "scoped obfuscate dry-run skips already-obfuscated IDs" {
+  notes obfuscate
+  alpha_id=$(grep $'\talpha\.md$' "$CALLER_PWD/notes/.manifest" | cut -f1)
+
+  run notes obfuscate --dry-run "$alpha_id"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"$alpha_id"* ]]
+  [[ "$output" != *"will be assigned"* ]]
+
+  [ -f "$CALLER_PWD/notes/$alpha_id" ]
 }
 
 @test "obfuscate handles new files added after initial obfuscation" {

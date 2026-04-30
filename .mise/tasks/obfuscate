@@ -38,7 +38,12 @@ if [ "${usage_dry_run:-}" = "true" ]; then
       [ ! -f "$abs_notes_dir/$relpath" ] && continue
       base=$(basename "$relpath")
       manifest_has_id "$manifest" "$base" && continue
-      echo "  $relpath → (will be assigned)"
+      existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
+      if [ -n "$existing_id" ]; then
+        echo "  $relpath → $existing_id"
+      else
+        echo "  $relpath → (will be assigned)"
+      fi
     done
   else
     while IFS= read -r f; do
