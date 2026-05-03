@@ -43,6 +43,19 @@ load test_helper
   run notes setup
   [ "$status" -eq 0 ]
   [[ "$output" == *"git-crypt already initialized — updating auxiliary files..."* ]]
+  [[ "$output" == *"Requested encrypted patterns already configured"* ]]
+}
+
+@test "setup adds notes pattern when other git-crypt patterns already exist" {
+  git -C "$TARGET_DIR" crypt init
+  echo ".modules/manifest filter=git-crypt diff=git-crypt" > "$TARGET_DIR/.gitattributes"
+
+  run notes setup
+  [ "$status" -eq 0 ]
+
+  grep -q "\.modules/manifest" "$TARGET_DIR/.gitattributes"
+  grep -q "notes/\*\*" "$TARGET_DIR/.gitattributes"
+  grep -q "git-crypt" "$TARGET_DIR/.gitattributes"
 }
 
 @test "setup with custom patterns writes them to .gitattributes" {
