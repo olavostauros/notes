@@ -838,24 +838,75 @@ EOF
   [ "$obfuscated_count" -eq 1 ]
 }
 
-@test "deobfuscate succeeds when readable name already exists on disk" {
-  # Simulate the bug: both obfuscated ID and readable name exist
+@test "deobfuscate refuses to overwrite dirty readable note" {
   notes obfuscate
   local alpha_id
   alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
   [ -f "$CALLER_PWD/notes/$alpha_id" ]
 
-  # Create a stale readable copy (simulates bad commit state)
-  echo "stale content" > "$CALLER_PWD/notes/alpha.md"
+  echo "local edit" > "$CALLER_PWD/notes/alpha.md"
 
-  # Deobfuscate should overwrite the stale copy, not fail
   run notes deobfuscate
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite dirty readable note"* ]]
+  [[ "$output" == *"alpha.md"* ]]
+
+  # Neither side should be destroyed on refusal.
+  [ -f "$CALLER_PWD/notes/$alpha_id" ]
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == "local edit" ]]
+}
+
+@test "deobfuscate refuses dirty readable note with recorded base hash" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  git -C "$CALLER_PWD" add -A notes
+  git -C "$CALLER_PWD" commit -q -m "obfuscate"
+
+  notes deobfuscate
+  echo "local edit" >> "$CALLER_PWD/notes/alpha.md"
+
+  # Simulate unlock/pull restoring the obfuscated source while the readable
+  # file still exists with local edits.
+  git -C "$CALLER_PWD" update-index --no-assume-unchanged "notes/$alpha_id" 2>/dev/null || true
+  git -C "$CALLER_PWD" checkout -- "notes/$alpha_id"
+
+  run notes deobfuscate
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite dirty readable note"* ]]
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"local edit"* ]]
+  [ -f "$CALLER_PWD/notes/$alpha_id" ]
+}
+
+@test "deobfuscate --force intentionally overwrites dirty readable note" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  [ -f "$CALLER_PWD/notes/$alpha_id" ]
+
+  echo "local edit" > "$CALLER_PWD/notes/alpha.md"
+
+  run notes deobfuscate -- --force
   [ "$status" -eq 0 ]
 
-  # Readable file has the authoritative content (from obfuscated copy)
   [ -f "$CALLER_PWD/notes/alpha.md" ]
   [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
-  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" != *"stale"* ]]
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" != *"local edit"* ]]
+}
+
+@test "deobfuscate allows identical readable note copy" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  [ -f "$CALLER_PWD/notes/$alpha_id" ]
+
+  cp "$CALLER_PWD/notes/$alpha_id" "$CALLER_PWD/notes/alpha.md"
+
+  run notes deobfuscate
+  [ "$status" -eq 0 ]
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
 }
 
 # ── Refuse re-obfuscation of already-hex-named files ──────────

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Unlock encrypted files using your GPG key"
+#USAGE flag "--force" help="Overwrite existing readable note files during deobfuscation"
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -17,5 +18,9 @@ echo "Note: unlock decrypts all encrypted files in this repo (rudi#5)."
 
 # Deobfuscate filenames if a manifest exists
 if [ -f "$TARGET_DIR/notes/.manifest" ]; then
-  cd "$MISE_CONFIG_ROOT" && CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate
+  if [ "${usage_force:-false}" = "true" ]; then
+    cd "$MISE_CONFIG_ROOT" && CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate -- --force
+  else
+    cd "$MISE_CONFIG_ROOT" && CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate
+  fi
 fi

@@ -2,6 +2,7 @@
 #MISE description="Restore obfuscated filenames to their original names"
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--dry-run" help="Show what would be renamed without doing it"
+#USAGE flag "--force" help="Overwrite existing readable files intentionally"
 #USAGE arg "[files]..." help="Specific obfuscated IDs to deobfuscate. Omit for all."
 set -eo pipefail
 
@@ -53,6 +54,7 @@ fi
 # Perform the rename via Layer 1
 # Exit codes: 0=success, 2=nothing to do, 1=error
 # Use subshell to capture exit code without triggering errexit.
+export NOTES_DEOBFUSCATE_FORCE="${usage_force:-false}"
 output=$(rename_to_readable "$abs_notes_dir" "${ARGS[@]}") && rc=0 || rc=$?
 if [ $rc -eq 2 ]; then
   echo "Nothing to deobfuscate."
@@ -86,6 +88,7 @@ fi
 
 # Set status suppression only for the IDs we just deobfuscated
 set_status_suppression "$abs_notes_dir" "${suppressed_ids[@]}"
+_record_deobfuscation_base_hashes "$abs_notes_dir" "${suppressed_ids[@]}"
 
 echo ""
 echo "Restored $restored file(s). Manifest preserved for stable IDs."
