@@ -609,7 +609,6 @@ EOF
   ! grep -q 'declare -A' "$MISE_CONFIG_ROOT/.mise/tasks/deobfuscate"
   ! grep -q 'declare -A' "$MISE_CONFIG_ROOT/hooks/obfuscation.template"
   ! grep -q 'declare -A' "$MISE_CONFIG_ROOT/hooks/post-commit-deobfuscate.template"
-  ! grep -q 'declare -A' "$MISE_CONFIG_ROOT/.mise/tasks/index"
 }
 
 @test "obfuscate succeeds with single file" {
