@@ -186,7 +186,11 @@ _deobfuscation_base_hash_for_id() {
   local state
   state=$(_deobfuscation_state_file "$notes_dir") || return 0
   [ -f "$state" ] || return 0
-  awk -F '\t' -v wanted="$id" '$1 == wanted { print $2; exit }' "$state"
+  # Last entry wins. The state file is append-only (see
+  # _record_deobfuscation_base_hashes); newer writes shadow older ones, and
+  # concurrent writers can't corrupt each other the way a tmp+mv
+  # read-modify-write would.
+  awk -F '\t' -v wanted="$id" '$1 == wanted { found=$2 } END { if (found != "") print found }' "$state"
 }
 
 _record_deobfuscation_base_hashes() {
@@ -201,36 +205,24 @@ _record_deobfuscation_base_hashes() {
   local repo_root="$RESOLVED_REPO_ROOT"
   local state="$repo_root/.git/info/notes-obfuscation-state"
   mkdir -p "$(dirname "$state")"
+  touch "$state"
 
-  local tmp
-  tmp=$(mktemp) || return 1
-
-  if [ -f "$state" ]; then
-    while IFS=$'\t' read -r existing_id existing_hash; do
-      [ -z "$existing_id" ] && continue
-      local replace=false
-      for id in "${ids[@]}"; do
-        if [ "$existing_id" = "$id" ]; then
-          replace=true
-          break
-        fi
-      done
-      if [ "$replace" = false ]; then
-        printf '%s\t%s\n' "$existing_id" "$existing_hash" >> "$tmp"
-      fi
-    done < "$state"
-  fi
-
+  # Append-only writes: each line is a single short id\thash row, atomic per
+  # POSIX for writes under PIPE_BUF (we're well under). The lookup helper
+  # takes the last entry per id, so newer writes shadow older ones. This
+  # avoids the read-modify-write race that a tmp+mv pattern is prone to when
+  # two deobfuscate processes interleave (manual unlock vs post-merge hook,
+  # sibling agents in shared worktrees). Periodic compaction is a separate
+  # concern; growth is bounded by the number of (id, content) pairs the
+  # repo has ever held, which is small for note-sized repos.
   for id in "${ids[@]}"; do
     local relpath sha
     relpath=$(manifest_name_for_id "$manifest" "$id")
     [ -z "$relpath" ] && continue
     [ -f "$notes_dir/$relpath" ] || continue
-    sha=$(git -C "$repo_root" hash-object -- "$notes_dir/$relpath") || { rm -f "$tmp"; return 1; }
-    printf '%s\t%s\n' "$id" "$sha" >> "$tmp"
+    sha=$(git -C "$repo_root" hash-object -- "$notes_dir/$relpath") || return 1
+    printf '%s\t%s\n' "$id" "$sha" >> "$state"
   done
-
-  mv -f "$tmp" "$state"
 }
 
 # Rename a single obfuscated ID back to its readable name.
@@ -247,14 +239,24 @@ _rename_one_to_readable() {
   [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
 
   if [ -e "$notes_dir/$relpath" ] && ! cmp -s "$notes_dir/$id" "$notes_dir/$relpath"; then
-    local current_hash base_hash
+    local current_hash base_hash state_file
+    state_file=$(_deobfuscation_state_file "$notes_dir" 2>/dev/null) || state_file=""
     current_hash=$(git -C "$notes_dir" hash-object -- "$notes_dir/$relpath" 2>/dev/null || true)
     base_hash=$(_deobfuscation_base_hash_for_id "$notes_dir" "$id")
 
-    if [ -z "$base_hash" ] || [ "$current_hash" != "$base_hash" ]; then
+    # Skip the dirty check entirely when no state file has ever been written
+    # in this clone. Two cases land here: a fresh clone before its first
+    # successful deobfuscate (no readable can collide with a recorded hash
+    # because nothing has been recorded), and an upgrade from a notes version
+    # before this safety landed (no state file yet). In both cases, treat the
+    # readable as trusted and let the rename proceed; the very next successful
+    # deobfuscate writes the state file and re-establishes the invariant.
+    if [ -n "$state_file" ] && [ -f "$state_file" ] \
+      && { [ -z "$base_hash" ] || [ "$current_hash" != "$base_hash" ]; }; then
       if [ "${NOTES_DEOBFUSCATE_FORCE:-false}" != "true" ]; then
         echo "Error: refusing to overwrite dirty readable note: $relpath" >&2
-        echo "Run 'notes changes $relpath' to inspect it, stage/commit it, or rerun with --force to overwrite intentionally." >&2
+        echo "This may be a real local edit, or a cosmetic editor re-save (trailing-newline trim, BOM, line-ending change)." >&2
+        echo "Run 'notes changes $relpath' to inspect; rerun with --force to overwrite intentionally." >&2
         return 1
       fi
     fi

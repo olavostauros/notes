@@ -59,19 +59,21 @@ output=$(rename_to_readable "$abs_notes_dir" "${ARGS[@]}") && rc=0 || rc=$?
 if [ $rc -eq 2 ]; then
   echo "Nothing to deobfuscate."
   exit 0
-elif [ $rc -ne 0 ]; then
-  echo "Error: deobfuscation failed" >&2
-  exit $rc
 fi
 
-# Print what was renamed, collect IDs for scoped suppression
+# Print what was renamed, collect IDs for scoped suppression. We do this even
+# on partial failure (rc != 0) so the state file and assume-unchanged stay
+# consistent with what's actually on disk; the error is reported afterwards.
 restored=0
 suppressed_ids=()
-while IFS=$'\t' read -r id relpath; do
-  echo "  $id → $relpath"
-  suppressed_ids+=("$id")
-  ((restored++)) || true
-done <<< "$output"
+if [ -n "$output" ]; then
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    echo "  $id → $relpath"
+    suppressed_ids+=("$id")
+    ((restored++)) || true
+  done <<< "$output"
+fi
 
 # Warn about unknown IDs in scoped mode (matches dry-run behavior)
 if [ ${#ARGS[@]} -gt 0 ]; then
@@ -86,9 +88,19 @@ if [ ${#ARGS[@]} -gt 0 ]; then
   done
 fi
 
-# Set status suppression only for the IDs we just deobfuscated
-set_status_suppression "$abs_notes_dir" "${suppressed_ids[@]}"
-_record_deobfuscation_base_hashes "$abs_notes_dir" "${suppressed_ids[@]}"
+# Record state for IDs that DID succeed even if a later one in the batch
+# errored out -- otherwise those files have no recorded base hash and a
+# future post-pull update is rejected without --force, even though the user
+# did nothing wrong.
+if [ ${#suppressed_ids[@]} -gt 0 ]; then
+  set_status_suppression "$abs_notes_dir" "${suppressed_ids[@]}"
+  _record_deobfuscation_base_hashes "$abs_notes_dir" "${suppressed_ids[@]}"
+fi
+
+if [ $rc -ne 0 ]; then
+  echo "Error: deobfuscation failed after restoring $restored file(s)" >&2
+  exit $rc
+fi
 
 echo ""
 echo "Restored $restored file(s). Manifest preserved for stable IDs."
