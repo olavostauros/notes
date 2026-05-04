@@ -61,9 +61,8 @@ if [ $rc -eq 2 ]; then
   exit 0
 fi
 
-# Print what was renamed, collect IDs for scoped suppression. We do this even
-# on partial failure (rc != 0) so the state file and assume-unchanged stay
-# consistent with what's actually on disk; the error is reported afterwards.
+# Print what was renamed, collect IDs. Do this even on partial failure so
+# the state file stays consistent with disk; surface the rc afterwards.
 restored=0
 suppressed_ids=()
 if [ -n "$output" ]; then
@@ -88,13 +87,14 @@ if [ ${#ARGS[@]} -gt 0 ]; then
   done
 fi
 
-# Record state for IDs that DID succeed even if a later one in the batch
-# errored out -- otherwise those files have no recorded base hash and a
-# future post-pull update is rejected without --force, even though the user
-# did nothing wrong.
+# Record state for what *did* succeed, even on partial failure. Tolerate
+# helper errors with `|| warn` so the original rename rc isn't masked under
+# `set -e`.
 if [ ${#suppressed_ids[@]} -gt 0 ]; then
-  set_status_suppression "$abs_notes_dir" "${suppressed_ids[@]}"
-  _record_deobfuscation_base_hashes "$abs_notes_dir" "${suppressed_ids[@]}"
+  set_status_suppression "$abs_notes_dir" "${suppressed_ids[@]}" \
+    || echo "Warning: failed to update status suppression" >&2
+  _record_deobfuscation_base_hashes "$abs_notes_dir" "${suppressed_ids[@]}" \
+    || echo "Warning: failed to record deobfuscation base hashes" >&2
 fi
 
 if [ $rc -ne 0 ]; then

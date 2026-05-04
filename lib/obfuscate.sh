@@ -207,14 +207,10 @@ _record_deobfuscation_base_hashes() {
   mkdir -p "$(dirname "$state")"
   touch "$state"
 
-  # Append-only writes: each line is a single short id\thash row, atomic per
-  # POSIX for writes under PIPE_BUF (we're well under). The lookup helper
-  # takes the last entry per id, so newer writes shadow older ones. This
-  # avoids the read-modify-write race that a tmp+mv pattern is prone to when
-  # two deobfuscate processes interleave (manual unlock vs post-merge hook,
-  # sibling agents in shared worktrees). Periodic compaction is a separate
-  # concern; growth is bounded by the number of (id, content) pairs the
-  # repo has ever held, which is small for note-sized repos.
+  # Append-only on purpose: O_APPEND under PIPE_BUF is atomic, so concurrent
+  # writers get out-of-order rows but never torn ones, and the lookup helper
+  # takes the last matching entry. Don't "fix" this back to tmp+mv -- that's
+  # the read-modify-write race we're avoiding.
   for id in "${ids[@]}"; do
     local relpath sha
     relpath=$(manifest_name_for_id "$manifest" "$id")
@@ -244,13 +240,9 @@ _rename_one_to_readable() {
     current_hash=$(git -C "$notes_dir" hash-object -- "$notes_dir/$relpath" 2>/dev/null || true)
     base_hash=$(_deobfuscation_base_hash_for_id "$notes_dir" "$id")
 
-    # Skip the dirty check entirely when no state file has ever been written
-    # in this clone. Two cases land here: a fresh clone before its first
-    # successful deobfuscate (no readable can collide with a recorded hash
-    # because nothing has been recorded), and an upgrade from a notes version
-    # before this safety landed (no state file yet). In both cases, treat the
-    # readable as trusted and let the rename proceed; the very next successful
-    # deobfuscate writes the state file and re-establishes the invariant.
+    # No state file (fresh clone or pre-safety upgrade) -> trust the readable
+    # and let the rename proceed. Force-prompting on every file would train
+    # users into --force-as-default, which is worse than the one-time window.
     if [ -n "$state_file" ] && [ -f "$state_file" ] \
       && { [ -z "$base_hash" ] || [ "$current_hash" != "$base_hash" ]; }; then
       if [ "${NOTES_DEOBFUSCATE_FORCE:-false}" != "true" ]; then

@@ -934,21 +934,28 @@ EOF
 
   # Establish state-file invariant for both files.
   notes deobfuscate
-  [ -f "$CALLER_PWD/.git/info/notes-obfuscation-state" ]
+  local state="$CALLER_PWD/.git/info/notes-obfuscation-state"
+  [ -f "$state" ]
 
-  # Dirty beta and re-obfuscate just the obfuscated source for both, then
-  # simulate a pull bringing back the obfuscated form alongside the dirty
-  # readable.
+  # Snapshot the count of rows for alpha_id BEFORE the partial-failure run.
+  # Pre-fix the task exit'd before re-recording, so this count would not
+  # change after the partial-failure run; post-fix it must increment.
+  # (Asserting a row simply *exists* would not catch the regression -- the
+  # row from this first deobfuscate is already present either way.)
+  local alpha_rows_before
+  alpha_rows_before=$(grep -c "^${alpha_id}"$'\t' "$state" || true)
+  [ "$alpha_rows_before" -eq 1 ]
+
+  # Dirty beta and restore the obfuscated source for both, simulating a pull
+  # that brings back the obfuscated form alongside the dirty readable.
   echo "local edit on beta" > "$CALLER_PWD/notes/beta.md"
   git -C "$CALLER_PWD" update-index --no-assume-unchanged "notes/$alpha_id" "notes/$beta_id" 2>/dev/null || true
   git -C "$CALLER_PWD" checkout -- "notes/$alpha_id" "notes/$beta_id"
   # Now alpha.md is up-to-date but the obfuscated source has been re-restored;
   # beta has a dirty readable that should refuse.
 
-  # Touch the alpha readable so it differs from the restored obfuscated source
-  # (cmp -s mismatch triggers the dirty path), but match the recorded base
-  # hash so the rename is allowed and we genuinely test the partial-batch
-  # bookkeeping rather than just the refusal path.
+  # Remove the alpha readable so the rename re-creates it from scratch (cmp -s
+  # mismatch triggers the rename path); beta refuses on the dirty check.
   rm -f "$CALLER_PWD/notes/alpha.md"
 
   run notes deobfuscate
@@ -956,9 +963,13 @@ EOF
   [[ "$output" == *"refusing to overwrite dirty readable note"* ]]
   # Alpha was renamed despite beta's failure...
   [ -f "$CALLER_PWD/notes/alpha.md" ]
-  # ...and the state file records it (this is the bug being fixed -- pre-fix
-  # the task exit'd before _record_deobfuscation_base_hashes was called).
-  grep -q "^${alpha_id}"$'\t' "$CALLER_PWD/.git/info/notes-obfuscation-state"
+  # ...and the state file recorded its base hash again (the actual regression
+  # under test). Pre-fix the task exit'd before _record_deobfuscation_base_hashes
+  # was called, so alpha_rows_after == alpha_rows_before. Post-fix the recording
+  # runs even on partial failure, so the row count strictly increases.
+  local alpha_rows_after
+  alpha_rows_after=$(grep -c "^${alpha_id}"$'\t' "$state" || true)
+  [ "$alpha_rows_after" -gt "$alpha_rows_before" ]
 }
 
 @test "deobfuscation state file is append-only and last-entry-wins" {
@@ -1005,6 +1016,9 @@ EOF
   local stale_hash="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
   printf '%s\t%s\n' "$alpha_id" "$stale_hash" >> "$state"
 
+  # Mirror the helper's awk semantic. Calling the helper directly would be
+  # tighter, but bats doesn't propagate sourced functions from setup() into
+  # the test body's exec context, so it shows up as "command not found."
   local last
   last=$(awk -F '\t' -v wanted="$alpha_id" '$1 == wanted { found=$2 } END { if (found != "") print found }' "$state")
   [ "$last" = "$stale_hash" ]
