@@ -1016,11 +1016,11 @@ EOF
   local stale_hash="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
   printf '%s\t%s\n' "$alpha_id" "$stale_hash" >> "$state"
 
-  # Mirror the helper's awk semantic. Calling the helper directly would be
-  # tighter, but bats doesn't propagate sourced functions from setup() into
-  # the test body's exec context, so it shows up as "command not found."
+  # Pin the contract on the helper, not its implementation -- a future
+  # rewrite of _deobfuscation_base_hash_for_id (different awk, perl, etc.)
+  # that silently broke last-entry-wins would then fail this test.
   local last
-  last=$(awk -F '\t' -v wanted="$alpha_id" '$1 == wanted { found=$2 } END { if (found != "") print found }' "$state")
+  last=$(_deobfuscation_base_hash_for_id "$CALLER_PWD/notes" "$alpha_id")
   [ "$last" = "$stale_hash" ]
 }
 
