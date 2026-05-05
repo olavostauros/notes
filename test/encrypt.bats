@@ -65,7 +65,7 @@ load test_helper
   [ "$status" -eq 0 ]
   [[ "$output" == *"Configuring encrypted patterns"* ]]
 
-  grep -q "notes/\*\*.*filter=git-crypt" "$TARGET_DIR/.gitattributes"
+  grep -Eq "^notes/\*\*[[:space:]]+filter=git-crypt" "$TARGET_DIR/.gitattributes"
 }
 
 @test "setup with custom patterns writes them to .gitattributes" {

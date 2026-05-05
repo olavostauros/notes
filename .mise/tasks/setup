@@ -85,6 +85,12 @@ if [ ${#missing_patterns[@]} -gt 0 ]; then
   echo "Configuring encrypted patterns..."
   for p in "${missing_patterns[@]}"; do
     rudi assign "$p"
+    if ! gitattributes_has_encrypted_pattern "$p"; then
+      # rudi treats an existing pattern with disabled attributes (for example
+      # "notes/** -filter=git-crypt") as already assigned. Append an explicit
+      # positive assignment so the requested pattern is actually encrypted.
+      printf '%-40s filter=git-crypt diff=git-crypt\n' "$p" >> "$GITATTRIBUTES"
+    fi
   done
   echo "  Updated .gitattributes"
 else
