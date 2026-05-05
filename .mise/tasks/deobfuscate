@@ -2,6 +2,7 @@
 #MISE description="Restore obfuscated filenames to their original names"
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--dry-run" help="Show what would be renamed without doing it"
+#USAGE flag "--force" help="Overwrite existing readable files intentionally"
 #USAGE arg "[files]..." help="Specific obfuscated IDs to deobfuscate. Omit for all."
 set -eo pipefail
 
@@ -53,23 +54,25 @@ fi
 # Perform the rename via Layer 1
 # Exit codes: 0=success, 2=nothing to do, 1=error
 # Use subshell to capture exit code without triggering errexit.
+export NOTES_DEOBFUSCATE_FORCE="${usage_force:-false}"
 output=$(rename_to_readable "$abs_notes_dir" "${ARGS[@]}") && rc=0 || rc=$?
 if [ $rc -eq 2 ]; then
   echo "Nothing to deobfuscate."
   exit 0
-elif [ $rc -ne 0 ]; then
-  echo "Error: deobfuscation failed" >&2
-  exit $rc
 fi
 
-# Print what was renamed, collect IDs for scoped suppression
+# Print what was renamed, collect IDs. Do this even on partial failure so
+# the state file stays consistent with disk; surface the rc afterwards.
 restored=0
 suppressed_ids=()
-while IFS=$'\t' read -r id relpath; do
-  echo "  $id → $relpath"
-  suppressed_ids+=("$id")
-  ((restored++)) || true
-done <<< "$output"
+if [ -n "$output" ]; then
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    echo "  $id → $relpath"
+    suppressed_ids+=("$id")
+    ((restored++)) || true
+  done <<< "$output"
+fi
 
 # Warn about unknown IDs in scoped mode (matches dry-run behavior)
 if [ ${#ARGS[@]} -gt 0 ]; then
@@ -84,8 +87,20 @@ if [ ${#ARGS[@]} -gt 0 ]; then
   done
 fi
 
-# Set status suppression only for the IDs we just deobfuscated
-set_status_suppression "$abs_notes_dir" "${suppressed_ids[@]}"
+# Record state for what *did* succeed, even on partial failure. Tolerate
+# helper errors with `|| warn` so the original rename rc isn't masked under
+# `set -e`.
+if [ ${#suppressed_ids[@]} -gt 0 ]; then
+  set_status_suppression "$abs_notes_dir" "${suppressed_ids[@]}" \
+    || echo "Warning: failed to update status suppression" >&2
+  _record_deobfuscation_base_hashes "$abs_notes_dir" "${suppressed_ids[@]}" \
+    || echo "Warning: failed to record deobfuscation base hashes" >&2
+fi
+
+if [ $rc -ne 0 ]; then
+  echo "Error: deobfuscation failed after restoring $restored file(s)" >&2
+  exit $rc
+fi
 
 echo ""
 echo "Restored $restored file(s). Manifest preserved for stable IDs."

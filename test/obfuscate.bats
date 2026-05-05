@@ -838,24 +838,190 @@ EOF
   [ "$obfuscated_count" -eq 1 ]
 }
 
-@test "deobfuscate succeeds when readable name already exists on disk" {
-  # Simulate the bug: both obfuscated ID and readable name exist
+@test "deobfuscate trusts existing readable when no state file (upgrade/fresh-clone path)" {
+  # Regression: notes#59 finding 1. Before this fix, the first deobfuscate
+  # after upgrading to the dirty-protection version would refuse every
+  # readable that differs from its obfuscated source -- because no state
+  # file existed yet, so every base_hash lookup returned empty, which the
+  # check treated as dirty. That forced users straight to --force on first
+  # run, training them to bypass the protection forever.
   notes obfuscate
   local alpha_id
   alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
   [ -f "$CALLER_PWD/notes/$alpha_id" ]
 
-  # Create a stale readable copy (simulates bad commit state)
-  echo "stale content" > "$CALLER_PWD/notes/alpha.md"
+  # Simulate a pre-fix clone: a stale readable on disk, no state file.
+  echo "stale readable from before the upgrade" > "$CALLER_PWD/notes/alpha.md"
+  rm -f "$CALLER_PWD/.git/info/notes-obfuscation-state"
 
-  # Deobfuscate should overwrite the stale copy, not fail
   run notes deobfuscate
   [ "$status" -eq 0 ]
+  # The readable was overwritten with the obfuscated content (the protection
+  # is opt-in only after the state file exists; on the upgrade run we trust
+  # the existing readable so users don't get force-prompted on every file).
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
+  # And the very next deobfuscate is now protected -- the state file got
+  # written on this run.
+  [ -f "$CALLER_PWD/.git/info/notes-obfuscation-state" ]
+  grep -q "^${alpha_id}"$'\t' "$CALLER_PWD/.git/info/notes-obfuscation-state"
+}
 
-  # Readable file has the authoritative content (from obfuscated copy)
+@test "deobfuscate refuses dirty readable note with recorded base hash" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  git -C "$CALLER_PWD" add -A notes
+  git -C "$CALLER_PWD" commit -q -m "obfuscate"
+
+  notes deobfuscate
+  echo "local edit" >> "$CALLER_PWD/notes/alpha.md"
+
+  # Simulate unlock/pull restoring the obfuscated source while the readable
+  # file still exists with local edits.
+  git -C "$CALLER_PWD" update-index --no-assume-unchanged "notes/$alpha_id" 2>/dev/null || true
+  git -C "$CALLER_PWD" checkout -- "notes/$alpha_id"
+
+  run notes deobfuscate
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite dirty readable note"* ]]
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"local edit"* ]]
+  [ -f "$CALLER_PWD/notes/$alpha_id" ]
+}
+
+@test "deobfuscate --force intentionally overwrites dirty readable note" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  [ -f "$CALLER_PWD/notes/$alpha_id" ]
+
+  echo "local edit" > "$CALLER_PWD/notes/alpha.md"
+
+  run notes deobfuscate -- --force
+  [ "$status" -eq 0 ]
+
   [ -f "$CALLER_PWD/notes/alpha.md" ]
   [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
-  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" != *"stale"* ]]
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" != *"local edit"* ]]
+}
+
+@test "deobfuscate allows identical readable note copy" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  [ -f "$CALLER_PWD/notes/$alpha_id" ]
+
+  cp "$CALLER_PWD/notes/$alpha_id" "$CALLER_PWD/notes/alpha.md"
+
+  run notes deobfuscate
+  [ "$status" -eq 0 ]
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
+}
+
+@test "deobfuscate records state for files renamed before mid-batch refusal" {
+  # Regression: notes#59 finding 2. rename_to_readable aborts on the first
+  # dirty file in a batch, but files renamed *before* that point are already
+  # moved on disk. Pre-fix, the deobfuscate task exit'd on rc != 0 before
+  # recording state, so those successfully-renamed files had no recorded base
+  # hash -- and the next post-pull update of any of them would be refused
+  # without --force, even though the user did nothing wrong.
+  notes obfuscate
+  local alpha_id beta_id
+  alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  beta_id=$(grep "beta.md"  "$CALLER_PWD/notes/.manifest" | cut -f1)
+  git -C "$CALLER_PWD" add -A notes
+  git -C "$CALLER_PWD" commit -q -m "obfuscate"
+
+  # Establish state-file invariant for both files.
+  notes deobfuscate
+  local state="$CALLER_PWD/.git/info/notes-obfuscation-state"
+  [ -f "$state" ]
+
+  # Snapshot the count of rows for alpha_id BEFORE the partial-failure run.
+  # Pre-fix the task exit'd before re-recording, so this count would not
+  # change after the partial-failure run; post-fix it must increment.
+  # (Asserting a row simply *exists* would not catch the regression -- the
+  # row from this first deobfuscate is already present either way.)
+  local alpha_rows_before
+  alpha_rows_before=$(grep -c "^${alpha_id}"$'\t' "$state" || true)
+  [ "$alpha_rows_before" -eq 1 ]
+
+  # Dirty beta and restore the obfuscated source for both, simulating a pull
+  # that brings back the obfuscated form alongside the dirty readable.
+  echo "local edit on beta" > "$CALLER_PWD/notes/beta.md"
+  git -C "$CALLER_PWD" update-index --no-assume-unchanged "notes/$alpha_id" "notes/$beta_id" 2>/dev/null || true
+  git -C "$CALLER_PWD" checkout -- "notes/$alpha_id" "notes/$beta_id"
+  # Now alpha.md is up-to-date but the obfuscated source has been re-restored;
+  # beta has a dirty readable that should refuse.
+
+  # Remove the alpha readable so the rename re-creates it from scratch (cmp -s
+  # mismatch triggers the rename path); beta refuses on the dirty check.
+  rm -f "$CALLER_PWD/notes/alpha.md"
+
+  run notes deobfuscate
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite dirty readable note"* ]]
+  # Alpha was renamed despite beta's failure...
+  [ -f "$CALLER_PWD/notes/alpha.md" ]
+  # ...and the state file recorded its base hash again (the actual regression
+  # under test). Pre-fix the task exit'd before _record_deobfuscation_base_hashes
+  # was called, so alpha_rows_after == alpha_rows_before. Post-fix the recording
+  # runs even on partial failure, so the row count strictly increases.
+  local alpha_rows_after
+  alpha_rows_after=$(grep -c "^${alpha_id}"$'\t' "$state" || true)
+  [ "$alpha_rows_after" -gt "$alpha_rows_before" ]
+}
+
+@test "deobfuscation state file is append-only and last-entry-wins" {
+  # Regression: notes#59 finding 3. The state file is now append-only to
+  # avoid a tmp+mv read-modify-write race when two deobfuscate processes
+  # interleave. Two invariants we test here:
+  #   (a) re-recording an id appends a new row instead of rewriting the file
+  #   (b) the lookup semantic takes the *last* matching row, so newer writes
+  #       shadow older ones (which is what makes append-only safe).
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep "alpha.md" "$CALLER_PWD/notes/.manifest" | cut -f1)
+  git -C "$CALLER_PWD" add -A notes
+  git -C "$CALLER_PWD" commit -q -m "obfuscate"
+
+  notes deobfuscate
+  local state="$CALLER_PWD/.git/info/notes-obfuscation-state"
+  [ -f "$state" ]
+
+  local rows_before alpha_rows_before
+  rows_before=$(wc -l < "$state" | tr -d ' ')
+  alpha_rows_before=$(grep -c "^${alpha_id}"$'\t' "$state" || true)
+  [ "$alpha_rows_before" -eq 1 ]
+
+  # Drive another deobfuscate cycle: dirty the readable, restore the
+  # obfuscated source from the commit (simulating a pull), then force.
+  # Pre-fix this rewrote the state file (rows_after == rows_before);
+  # post-fix it appends (rows_after > rows_before).
+  echo "local edit" >> "$CALLER_PWD/notes/alpha.md"
+  git -C "$CALLER_PWD" update-index --no-assume-unchanged "notes/$alpha_id" 2>/dev/null || true
+  git -C "$CALLER_PWD" checkout -- "notes/$alpha_id"
+  notes deobfuscate -- --force
+
+  local rows_after alpha_rows_after
+  rows_after=$(wc -l < "$state" | tr -d ' ')
+  alpha_rows_after=$(grep -c "^${alpha_id}"$'\t' "$state" || true)
+  [ "$rows_after" -gt "$rows_before" ]
+  [ "$alpha_rows_after" -gt "$alpha_rows_before" ]
+
+  # Last-entry-wins lookup: inject a stale row at the end and confirm the
+  # awk "last match" semantic the helper uses returns the stale one (i.e.
+  # whatever was written most recently wins). This is the property that
+  # makes append-only safe under concurrent writes.
+  local stale_hash="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  printf '%s\t%s\n' "$alpha_id" "$stale_hash" >> "$state"
+
+  # Pin the contract on the helper, not its implementation -- a future
+  # rewrite of _deobfuscation_base_hash_for_id (different awk, perl, etc.)
+  # that silently broke last-entry-wins would then fail this test.
+  local last
+  last=$(_deobfuscation_base_hash_for_id "$CALLER_PWD/notes" "$alpha_id")
+  [ "$last" = "$stale_hash" ]
 }
 
 # ── Refuse re-obfuscation of already-hex-named files ──────────

@@ -172,6 +172,55 @@ rename_to_obfuscated() {
   rm -f "$merged" "$new_entries"
 }
 
+# Local state file recording the content hash last restored for each ID.
+# This lets deobfuscation distinguish a clean stale readable file (safe to
+# update after pull/merge) from a locally-edited readable file (must preserve).
+_deobfuscation_state_file() {
+  local notes_dir="$1"
+  resolve_notes_dir "$notes_dir" || return 1
+  printf '%s/.git/info/notes-obfuscation-state' "$RESOLVED_REPO_ROOT"
+}
+
+_deobfuscation_base_hash_for_id() {
+  local notes_dir="$1" id="$2"
+  local state
+  state=$(_deobfuscation_state_file "$notes_dir") || return 0
+  [ -f "$state" ] || return 0
+  # Last entry wins. The state file is append-only (see
+  # _record_deobfuscation_base_hashes); newer writes shadow older ones, and
+  # concurrent writers can't corrupt each other the way a tmp+mv
+  # read-modify-write would.
+  awk -F '\t' -v wanted="$id" '$1 == wanted { found=$2 } END { if (found != "") print found }' "$state"
+}
+
+_record_deobfuscation_base_hashes() {
+  local notes_dir="$1"
+  shift
+  local ids=("$@")
+  local manifest="$notes_dir/.manifest"
+  [ -f "$manifest" ] || return 0
+  [ ${#ids[@]} -gt 0 ] || return 0
+
+  resolve_notes_dir "$notes_dir" || return 0
+  local repo_root="$RESOLVED_REPO_ROOT"
+  local state="$repo_root/.git/info/notes-obfuscation-state"
+  mkdir -p "$(dirname "$state")"
+  touch "$state"
+
+  # Append-only on purpose: O_APPEND under PIPE_BUF is atomic, so concurrent
+  # writers get out-of-order rows but never torn ones, and the lookup helper
+  # takes the last matching entry. Don't "fix" this back to tmp+mv -- that's
+  # the read-modify-write race we're avoiding.
+  for id in "${ids[@]}"; do
+    local relpath sha
+    relpath=$(manifest_name_for_id "$manifest" "$id")
+    [ -z "$relpath" ] && continue
+    [ -f "$notes_dir/$relpath" ] || continue
+    sha=$(git -C "$repo_root" hash-object -- "$notes_dir/$relpath") || return 1
+    printf '%s\t%s\n' "$id" "$sha" >> "$state"
+  done
+}
+
 # Rename a single obfuscated ID back to its readable name.
 # Returns: 0=renamed, 2=skipped (not found/no match), 1=error (mv failed).
 _rename_one_to_readable() {
@@ -185,8 +234,28 @@ _rename_one_to_readable() {
   target_dir=$(dirname "$notes_dir/$relpath")
   [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
 
-  # Use -f to handle the case where the readable name already exists
-  # (e.g., committed with both readable and obfuscated names).
+  if [ -e "$notes_dir/$relpath" ] && ! cmp -s "$notes_dir/$id" "$notes_dir/$relpath"; then
+    local current_hash base_hash state_file
+    state_file=$(_deobfuscation_state_file "$notes_dir" 2>/dev/null) || state_file=""
+    current_hash=$(git -C "$notes_dir" hash-object -- "$notes_dir/$relpath" 2>/dev/null || true)
+    base_hash=$(_deobfuscation_base_hash_for_id "$notes_dir" "$id")
+
+    # No state file (fresh clone or pre-safety upgrade) -> trust the readable
+    # and let the rename proceed. Force-prompting on every file would train
+    # users into --force-as-default, which is worse than the one-time window.
+    if [ -n "$state_file" ] && [ -f "$state_file" ] \
+      && { [ -z "$base_hash" ] || [ "$current_hash" != "$base_hash" ]; }; then
+      if [ "${NOTES_DEOBFUSCATE_FORCE:-false}" != "true" ]; then
+        echo "Error: refusing to overwrite dirty readable note: $relpath" >&2
+        echo "This may be a real local edit, or a cosmetic editor re-save (trailing-newline trim, BOM, line-ending change)." >&2
+        echo "Run 'notes changes $relpath' to inspect; rerun with --force to overwrite intentionally." >&2
+        return 1
+      fi
+    fi
+  fi
+
+  # Use -f only after the safety check above. Identical readable copies are
+  # harmless; differing copies require explicit --force.
   if ! mv -f "$notes_dir/$id" "$notes_dir/$relpath"; then
     echo "Error: failed to rename $id → $relpath" >&2
     return 1
