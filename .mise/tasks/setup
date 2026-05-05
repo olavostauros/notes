@@ -50,25 +50,52 @@ fi
 
 # --- Configure .gitattributes via rudi ---
 GITATTRIBUTES="$TARGET_DIR/.gitattributes"
-if ! grep -q "git-crypt" "$GITATTRIBUTES" 2>/dev/null; then
+
+gitattributes_has_encrypted_pattern() {
+  local pattern="$1"
+  awk -v pattern="$pattern" '
+    $1 == pattern {
+      for (i = 2; i <= NF; i++) {
+        if ($i == "filter=git-crypt") found = 1
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$GITATTRIBUTES" 2>/dev/null
+}
+
+if [ -n "${usage_pattern:-}" ]; then
+  patterns=()
+  while IFS= read -r pattern; do
+    patterns+=("$pattern")
+  done < <(printf '%s' "$usage_pattern" | xargs printf '%s\n')
+else
+  patterns=("notes/**")
+fi
+
+missing_patterns=()
+for p in "${patterns[@]}"; do
+  [ -z "$p" ] && continue
+  if ! gitattributes_has_encrypted_pattern "$p"; then
+    missing_patterns+=("$p")
+  fi
+done
+
+if [ ${#missing_patterns[@]} -gt 0 ]; then
   echo ""
   echo "Configuring encrypted patterns..."
-
-  if [ -n "${usage_pattern:-}" ]; then
-    IFS=$'\n' read -r -d '' -a patterns <<< "$usage_pattern" || true
-  else
-    patterns=("notes/**")
-  fi
-
-  for p in "${patterns[@]}"; do
-    [ -z "$p" ] && continue
+  for p in "${missing_patterns[@]}"; do
     rudi assign "$p"
+    if ! gitattributes_has_encrypted_pattern "$p"; then
+      # rudi treats an existing pattern with disabled attributes (for example
+      # "notes/** -filter=git-crypt") as already assigned. Append an explicit
+      # positive assignment so the requested pattern is actually encrypted.
+      printf '%-40s filter=git-crypt diff=git-crypt\n' "$p" >> "$GITATTRIBUTES"
+    fi
   done
-
   echo "  Updated .gitattributes"
 else
   echo ""
-  echo "  .gitattributes already has git-crypt patterns, skipping"
+  echo "  Requested encrypted patterns already configured"
 fi
 
 # --- Bootstrap obfuscation manifest ---
