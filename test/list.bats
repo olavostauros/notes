@@ -72,6 +72,44 @@ setup() {
   echo "$output" | python3 -c "import sys, json; assert json.load(sys.stdin)[0]['title'] == 'Guide A'"
 }
 
+@test "list --json parses block-list tags" {
+  cat > "$CALLER_PWD/notes/block-tags.md" <<'EOF'
+---
+title: Block Tag Note
+tags:
+  - guide
+  - testing
+created: 2026-01-01
+updated: 2026-01-02
+---
+
+# Block Tag Note
+EOF
+
+  run notes list -- --json
+  [ "$status" -eq 0 ]
+  echo "$output" | python3 -c "import sys, json; assert json.load(sys.stdin)[0]['tags'] == ['guide', 'testing']"
+}
+
+@test "list --tag matches block-list tags" {
+  cat > "$CALLER_PWD/notes/block-tags.md" <<'EOF'
+---
+title: Block Tag Note
+tags:
+  - guide
+  - testing
+created: 2026-01-01
+updated: 2026-01-02
+---
+
+# Block Tag Note
+EOF
+
+  run notes list -- --json --tag guide
+  [ "$status" -eq 0 ]
+  echo "$output" | python3 -c "import sys, json; data = json.load(sys.stdin); assert len(data) == 1; assert data[0]['title'] == 'Block Tag Note'"
+}
+
 @test "list empty directory shows no notes" {
   run notes list
   [ "$status" -eq 0 ]
