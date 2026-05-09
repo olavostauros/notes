@@ -97,6 +97,64 @@ setup() {
   [ -z "$output" ]
 }
 
+@test "detect_changes: handles many notes with mixed changes" {
+  local i name delete_id
+
+  i=1
+  while [ "$i" -le 40 ]; do
+    name=$(printf 'note-%02d.md' "$i")
+    printf '# Note %02d\n' "$i" > "$CALLER_PWD/notes/$name"
+    i=$((i + 1))
+  done
+
+  rename_to_obfuscated "$CALLER_PWD/notes" > /dev/null
+  git -C "$CALLER_PWD" add -A
+  git -C "$CALLER_PWD" commit -q -m "add many notes"
+  rename_to_readable "$CALLER_PWD/notes" > /dev/null
+  set_status_suppression "$CALLER_PWD/notes"
+
+  printf '# Note 10 edited\n' > "$CALLER_PWD/notes/note-10.md"
+  printf '# New\n' > "$CALLER_PWD/notes/new.md"
+  rm "$CALLER_PWD/notes/note-20.md"
+  delete_id=$(manifest_id_for_name "$MANIFEST" "note-20.md")
+  rm -f "$CALLER_PWD/notes/$delete_id"
+
+  run detect_changes "$CALLER_PWD/notes"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"modified"*"note-10.md"* ]]
+  [[ "$output" == *"deleted"*"note-20.md"* ]]
+  [[ "$output" == *"new"*"new.md"* ]]
+  [[ "$output" != *"note-30.md"* ]]
+}
+
+@test "detect_changes: preserves tracked-path filter semantics when attrs differ" {
+  local repo
+  repo="$BATS_TEST_TMPDIR/path-attrs-repo"
+  mkdir -p "$repo/notes"
+  git -C "$repo" init -q
+  git -C "$repo" config user.name "Test"
+  git -C "$repo" config user.email "test@test.com"
+  git -C "$repo" config filter.prefix.clean "sed 's/^/clean:/'"
+  printf 'notes/???????? filter=prefix\n' > "$repo/.gitattributes"
+  echo "# Alpha" > "$repo/notes/alpha.md"
+  echo "# Beta" > "$repo/notes/beta.md"
+
+  rename_to_obfuscated "$repo/notes" > /dev/null
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "initial with path-specific attrs"
+  rename_to_readable "$repo/notes" > /dev/null
+  set_status_suppression "$repo/notes"
+
+  run detect_changes "$repo/notes"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+
+  printf '# Alpha edited\n' > "$repo/notes/alpha.md"
+  run detect_changes "$repo/notes"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"modified"*"alpha.md"* ]]
+}
+
 # ── exclude management ────────────────────────────────────────
 
 @test "set_status_suppression adds exclude entries" {

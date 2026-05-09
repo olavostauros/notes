@@ -18,60 +18,139 @@ detect_changes() {
   local repo_root="$RESOLVED_REPO_ROOT"
   local notes_dir="$RESOLVED_NOTES_DIR"
 
+  local tmp_dir head_in head_out disk_in disk_out manifest_ids manifest_names
+  local tracked_attr_in readable_attr_in tracked_attr_out readable_attr_out
+  tmp_dir=$(mktemp -d) || return
+  head_in="$tmp_dir/head-in"
+  head_out="$tmp_dir/head-out"
+  disk_in="$tmp_dir/disk-in"
+  disk_out="$tmp_dir/disk-out"
+  manifest_ids="$tmp_dir/manifest-ids"
+  manifest_names="$tmp_dir/manifest-names"
+  tracked_attr_in="$tmp_dir/tracked-attr-in"
+  readable_attr_in="$tmp_dir/readable-attr-in"
+  tracked_attr_out="$tmp_dir/tracked-attr-out"
+  readable_attr_out="$tmp_dir/readable-attr-out"
+  : > "$head_in"
+  : > "$disk_in"
+  : > "$manifest_ids"
+  : > "$manifest_names"
+  : > "$tracked_attr_in"
+  : > "$readable_attr_in"
+
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    printf 'HEAD:%s/%s\n' "$notes_dir" "$id" >> "$head_in"
+    printf '%s\n' "$id" >> "$manifest_ids"
+    printf '%s\n' "$relpath" >> "$manifest_names"
+
+    if [ -f "$abs_notes_dir/$relpath" ]; then
+      printf '%s/%s\n' "$notes_dir" "$relpath" >> "$disk_in"
+      printf '%s/%s\n' "$notes_dir" "$id" >> "$tracked_attr_in"
+      printf '%s/%s\n' "$notes_dir" "$relpath" >> "$readable_attr_in"
+    fi
+  done < "$manifest"
+
+  git -C "$repo_root" cat-file --batch-check='%(objectname)' < "$head_in" > "$head_out" 2>/dev/null || {
+    rm -rf "$tmp_dir"
+    return
+  }
+
+  local use_batch_hash=true
+  if [ -s "$disk_in" ]; then
+    # `hash-object --stdin-paths` hashes each readable file using attributes for
+    # that readable path. The old per-file implementation hashes readable bytes
+    # as the tracked obfuscated path (`--path=$notes_dir/$id`). Preserve that
+    # behavior by batching only when clean-filter-relevant attributes match.
+    if git -C "$repo_root" check-attr --stdin \
+      filter text eol ident working-tree-encoding \
+      < "$tracked_attr_in" > "$tracked_attr_out.raw" 2>/dev/null; then
+      sed 's/^[^:]*: //' "$tracked_attr_out.raw" > "$tracked_attr_out"
+    else
+      use_batch_hash=false
+    fi
+    if git -C "$repo_root" check-attr --stdin \
+      filter text eol ident working-tree-encoding \
+      < "$readable_attr_in" > "$readable_attr_out.raw" 2>/dev/null; then
+      sed 's/^[^:]*: //' "$readable_attr_out.raw" > "$readable_attr_out"
+    else
+      use_batch_hash=false
+    fi
+    if $use_batch_hash && cmp -s "$tracked_attr_out" "$readable_attr_out"; then
+      git -C "$repo_root" hash-object --stdin-paths < "$disk_in" > "$disk_out" 2>/dev/null || {
+        rm -rf "$tmp_dir"
+        return
+      }
+    else
+      use_batch_hash=false
+      : > "$disk_out"
+    fi
+  else
+    : > "$disk_out"
+  fi
+
+  exec 3< "$head_out"
+  exec 4< "$disk_out"
   while IFS=$'\t' read -r id relpath; do
     [ -z "$id" ] && continue
 
     local readable_file="$abs_notes_dir/$relpath"
-    local git_path="$notes_dir/$id"
+    local head_hash head_exists=true
+    IFS= read -r head_hash <&3 || head_hash=""
+    case "$head_hash" in
+      *" missing") head_exists=false ;;
+    esac
 
     if [ -f "$readable_file" ]; then
-      # File exists on disk — check if it's new or modified
-      local head_hash
-      head_hash=$(git -C "$repo_root" rev-parse "HEAD:$git_path" 2>/dev/null) || {
-        # Not in HEAD — it's a new note
+      # File exists on disk — check if it's new or modified.
+      if ! $head_exists; then
         printf 'new\t%s\n' "$relpath"
+        if $use_batch_hash; then
+          IFS= read -r _disk_hash <&4 || true
+        fi
         continue
-      }
+      fi
 
-      # Hash the readable file through git's clean filter (handles encryption).
-      # --path tells git which .gitattributes filters to apply.
       local disk_hash
-      disk_hash=$(git -C "$repo_root" hash-object --path="$git_path" "$readable_file" 2>/dev/null) || continue
+      if $use_batch_hash; then
+        IFS= read -r disk_hash <&4 || disk_hash=""
+      else
+        disk_hash=$(git -C "$repo_root" hash-object --path="$notes_dir/$id" "$readable_file" 2>/dev/null) || continue
+      fi
       if [ "$head_hash" != "$disk_hash" ]; then
         printf 'modified\t%s\n' "$relpath"
       fi
     else
-      # Readable name not on disk — check if obfuscated form exists
-      # (if neither exists, the note was deleted)
-      if [ ! -f "$abs_notes_dir/$id" ]; then
-        # Check it was actually committed (not just a stale manifest entry)
-        if git -C "$repo_root" show "HEAD:$git_path" &>/dev/null; then
-          printf 'deleted\t%s\n' "$relpath"
-        fi
+      # Readable name not on disk — check if obfuscated form exists. If neither
+      # exists and HEAD has the obfuscated blob, the note was deleted. If the
+      # obfuscated form exists on disk, the file isn't deobfuscated — skip.
+      if [ ! -f "$abs_notes_dir/$id" ] && $head_exists; then
+        printf 'deleted\t%s\n' "$relpath"
       fi
-      # If obfuscated form exists on disk, the file isn't deobfuscated — skip
     fi
   done < "$manifest"
+  exec 3<&-
+  exec 4<&-
 
-  # Scan for new files not yet in the manifest
+  # Scan for new files not yet in the manifest.
   while IFS= read -r f; do
     [ ! -f "$f" ] && continue
     local relpath="${f#"$abs_notes_dir"/}"
     [[ "$relpath" == ".manifest" ]] && continue
 
-    # Skip obfuscated IDs (8-char hex filenames that are in the manifest)
+    # Skip obfuscated IDs that are in the manifest.
     local base
     base=$(basename "$relpath")
-    manifest_has_id "$manifest" "$base" && continue
+    grep -Fxq "$base" "$manifest_ids" && continue
 
-    # Skip files already in the manifest (by readable name)
-    local existing_id
-    existing_id=$(manifest_id_for_name "$manifest" "$relpath" || true)
-    [ -n "$existing_id" ] && continue
+    # Skip files already in the manifest by readable name.
+    grep -Fxq "$relpath" "$manifest_names" && continue
 
-    # This is a genuinely new file
+    # This is a genuinely new file.
     printf 'new\t%s\n' "$relpath"
   done < <(find "$abs_notes_dir" -type f | sort)
+
+  rm -rf "$tmp_dir"
 }
 
 # Show diffs for changed notes.
