@@ -383,11 +383,13 @@ setup() {
 
 # --- Hook installation ---
 
-@test "install-hooks installs obfuscation pre-commit hook" {
+@test "install-hooks installs pre-commit hooks" {
   notes install-hooks
 
   [ -x "$CALLER_PWD/.git/hooks/pre-commit" ]
   grep -q "Generic hook dispatcher" "$CALLER_PWD/.git/hooks/pre-commit"
+  [ -x "$CALLER_PWD/.git/hooks/pre-commit.d/encryption" ]
+  grep -q "git-crypt status" "$CALLER_PWD/.git/hooks/pre-commit.d/encryption"
   [ -x "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation" ]
   grep -q "manifest" "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation"
 }

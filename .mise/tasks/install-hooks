@@ -9,11 +9,13 @@ require_git
 
 notes_dir="${usage_dir:-notes}"
 
+install_encryption_hook
 install_obfuscation_hook "$notes_dir"
 install_deobfuscation_hook "$notes_dir"
 install_manifest_merge_driver "$notes_dir"
 
 echo "Installed hooks:"
+echo "  pre-commit.d/encryption — rejects plaintext staged encrypted files"
 echo "  pre-commit.d/obfuscation — auto-obfuscates staged readable names"
 echo "  post-commit.d/deobfuscation — restores readable names after commit"
 echo "  post-merge.d/deobfuscation — restores readable names after pull"

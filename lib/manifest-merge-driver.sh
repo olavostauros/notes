@@ -43,12 +43,9 @@ trap 'rm -rf "$WORK"' EXIT
 # behavior: git then surfaces a merge conflict on the manifest, and the
 # user is forced to investigate rather than silently accepting a corrupted
 # merged manifest.
-decrypt_if_needed() {
-  local src="$1" dst="$2"
-  if [ ! -s "$src" ]; then
-    : > "$dst"
-    return 0
-  fi
+is_gitcrypt_file() {
+  local src="$1"
+  [ -s "$src" ] || return 1
   # git-crypt files begin with the 10-byte header \0 G I T C R Y P T \0.
   # Bash strings can't hold the leading \0 (it terminates the string), so
   # read bytes 2-9 and check they spell "GITCRYPT". Files shorter than 9
@@ -56,7 +53,16 @@ decrypt_if_needed() {
   # match, and we treat it as plaintext.
   local header
   header=$(dd if="$src" bs=1 skip=1 count=8 2>/dev/null)
-  if [ "$header" = "GITCRYPT" ]; then
+  [ "$header" = "GITCRYPT" ]
+}
+
+decrypt_if_needed() {
+  local src="$1" dst="$2"
+  if [ ! -s "$src" ]; then
+    : > "$dst"
+    return 0
+  fi
+  if is_gitcrypt_file "$src"; then
     if ! git-crypt smudge < "$src" > "$dst" 2>/dev/null; then
       echo "manifest-merge-driver: git-crypt smudge failed on $src — is the repo unlocked?" >&2
       echo "manifest-merge-driver: aborting merge to avoid producing a corrupt manifest." >&2
@@ -64,6 +70,19 @@ decrypt_if_needed() {
     fi
   else
     cp "$src" "$dst"
+  fi
+}
+
+write_success_result() {
+  local plaintext="$1"
+  if is_gitcrypt_file "$ANCESTOR" || is_gitcrypt_file "$OURS" || is_gitcrypt_file "$THEIRS"; then
+    if ! git-crypt clean < "$plaintext" > "$OURS" 2>/dev/null; then
+      echo "manifest-merge-driver: git-crypt clean failed — is this a git-crypt repo?" >&2
+      echo "manifest-merge-driver: aborting merge to avoid committing a plaintext manifest." >&2
+      return 1
+    fi
+  else
+    cp "$plaintext" "$OURS"
   fi
 }
 
@@ -153,12 +172,16 @@ while IFS= read -r name; do
   fi
 done < "$WORK/all_names"
 
-# Write result to OURS (git expects the merge result there)
-sort -t$'\t' -k2 "$WORK/merged" > "$OURS"
+# Write result to OURS (git expects the merge result there). On successful
+# git-crypt-backed merges, write encrypted output because rebase/custom-driver
+# paths can commit %A directly without running the clean filter again.
+sort -t$'\t' -k2 "$WORK/merged" > "$WORK/result"
 
 if [ "$has_conflict" = true ]; then
+  cp "$WORK/result" "$OURS"
   cat "$WORK/conflicts" >> "$OURS"
   exit 1
 else
+  write_success_result "$WORK/result"
   exit 0
 fi
