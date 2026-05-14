@@ -6,6 +6,13 @@
 
 load test_helper
 
+assert_gitcrypt_blob() {
+  local repo="$1" ref_path="$2"
+  local header
+  header=$(git -C "$repo" cat-file -p "$ref_path" | dd bs=1 skip=1 count=8 2>/dev/null)
+  [ "$header" = "GITCRYPT" ] || fail "expected encrypted blob at $ref_path"
+}
+
 # Override default setup — we need a remote + local pair, not a single repo.
 setup() {
   source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -259,4 +266,62 @@ setup() {
   # Manifest has all entries
   grep -q "feature.md" "$LOCAL/notes/.manifest"
   grep -q "other.md" "$LOCAL/notes/.manifest"
+}
+
+@test "rebase: git-crypt manifest stays encrypted in rebased commit" {
+  if ! command -v git-crypt >/dev/null; then
+    skip "git-crypt not installed"
+  fi
+
+  local repo="$BATS_TEST_TMPDIR/crypt-rebase"
+  mkdir -p "$repo/notes"
+  git -C "$repo" init -q -b main
+  git -C "$repo" config user.email "test@test.com"
+  git -C "$repo" config user.name "Test"
+  ( cd "$repo" && git-crypt init >/dev/null 2>&1 ) || skip "git-crypt init failed"
+
+  cat > "$repo/.gitattributes" <<'EOT'
+notes/** filter=git-crypt diff=git-crypt
+notes/.manifest merge=manifest
+EOT
+  cat > "$repo/notes/.manifest" <<'EOT'
+aaa00001	alpha.md
+EOT
+  echo "alpha" > "$repo/notes/aaa00001"
+  git -C "$repo" add .gitattributes notes/.manifest notes/aaa00001
+  git -C "$repo" commit -q -m "init"
+
+  CALLER_PWD="$repo" notes install-hooks >/dev/null
+
+  git -C "$repo" switch -q -c feature
+  cat > "$repo/notes/.manifest" <<'EOT'
+aaa00001	alpha.md
+bbb00001	beta.md
+EOT
+  echo "beta" > "$repo/notes/bbb00001"
+  git -C "$repo" add notes/.manifest notes/bbb00001
+  git -C "$repo" commit -q --no-verify -m "feature manifest"
+
+  git -C "$repo" switch -q main
+  cat > "$repo/notes/.manifest" <<'EOT'
+aaa00001	alpha.md
+ccc00001	gamma.md
+EOT
+  echo "gamma" > "$repo/notes/ccc00001"
+  git -C "$repo" add notes/.manifest notes/ccc00001
+  git -C "$repo" commit -q --no-verify -m "main manifest"
+
+  git -C "$repo" switch -q feature
+  run git -C "$repo" rebase main
+  [ "$status" -eq 0 ]
+
+  assert_gitcrypt_blob "$repo" "HEAD:notes/.manifest"
+  grep -qF "beta.md" "$repo/notes/.manifest"
+  grep -qF "gamma.md" "$repo/notes/.manifest"
+  [ -z "$(git -C "$repo" status --short)" ]
+
+  local merged_plain="$BATS_TEST_TMPDIR/crypt-rebase-merged"
+  git -C "$repo" cat-file -p HEAD:notes/.manifest | (cd "$repo" && git-crypt smudge) > "$merged_plain"
+  grep -qF "beta.md" "$merged_plain"
+  grep -qF "gamma.md" "$merged_plain"
 }

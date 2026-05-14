@@ -18,6 +18,18 @@ make_manifest() {
   done
 }
 
+assert_gitcrypt_file() {
+  local file="$1"
+  local header
+  header=$(dd if="$file" bs=1 skip=1 count=8 2>/dev/null)
+  [ "$header" = "GITCRYPT" ] || fail "expected git-crypt output, got: $(head -c 20 "$file" | od -An -c)"
+}
+
+decrypt_gitcrypt_file() {
+  local encrypted="$1" plaintext="$2"
+  git-crypt smudge < "$encrypted" > "$plaintext"
+}
+
 setup() {
   export TARGET_DIR="$BATS_TEST_TMPDIR/test-repo"
   mkdir -p "$TARGET_DIR"
@@ -328,17 +340,18 @@ EOT
   # Expect successful merge (no conflict; union of additions)
   [ "$status" -eq 0 ]
 
-  # Result is written back to `ours` — and git will run the clean filter on
-  # it before writing to the index, so the driver must output PLAINTEXT.
-  local result_size
-  result_size=$(wc -c < "$encrypted_ours" | tr -d ' ')
-  [ "$result_size" -gt 0 ] || fail "driver wrote empty result — encrypted input not decrypted"
+  # Result is written back to `ours`. Successful encrypted-input merges must
+  # leave encrypted output because rebase/custom-driver paths can commit %A
+  # directly without running the clean filter again.
+  assert_gitcrypt_file "$encrypted_ours"
+  local merged_plain="$BATS_TEST_TMPDIR/merged_plain"
+  decrypt_gitcrypt_file "$encrypted_ours" "$merged_plain"
 
   # All three entries should be present (alpha from ancestor, gamma from ours, delta from theirs)
-  grep -qF "alpha.md" "$encrypted_ours" || fail "missing alpha.md: $(cat "$encrypted_ours")"
-  grep -qF "beta.md"  "$encrypted_ours" || fail "missing beta.md"
-  grep -qF "gamma.md" "$encrypted_ours" || fail "missing gamma.md"
-  grep -qF "delta.md" "$encrypted_ours" || fail "missing delta.md"
+  grep -qF "alpha.md" "$merged_plain" || fail "missing alpha.md: $(cat "$merged_plain")"
+  grep -qF "beta.md"  "$merged_plain" || fail "missing beta.md"
+  grep -qF "gamma.md" "$merged_plain" || fail "missing gamma.md"
+  grep -qF "delta.md" "$merged_plain" || fail "missing delta.md"
 }
 
 @test "merge driver: plaintext inputs (no git-crypt) still merge correctly" {
@@ -507,8 +520,11 @@ EOT
   run bash "$DRIVER" "$empty_anc" "$enc_ours" "$enc_theirs"
   [ "$status" -eq 0 ]
 
-  grep -qF "alpha.md" "$enc_ours" || fail "missing alpha.md"
-  grep -qF "beta.md"  "$enc_ours" || fail "missing beta.md"
+  assert_gitcrypt_file "$enc_ours"
+  local merged_plain="$BATS_TEST_TMPDIR/empty_anc_merged_plain"
+  decrypt_gitcrypt_file "$enc_ours" "$merged_plain"
+  grep -qF "alpha.md" "$merged_plain" || fail "missing alpha.md"
+  grep -qF "beta.md"  "$merged_plain" || fail "missing beta.md"
 }
 
 @test "merge driver: mixed encrypted + plaintext inputs merge normally" {
@@ -556,9 +572,12 @@ EOT
   run bash "$DRIVER" "$enc_anc" "$enc_ours" "$plain_theirs"
   [ "$status" -eq 0 ]
 
-  grep -qF "alpha.md" "$enc_ours" || fail "missing alpha.md"
-  grep -qF "gamma.md" "$enc_ours" || fail "missing gamma.md (from encrypted ours)"
-  grep -qF "delta.md" "$enc_ours" || fail "missing delta.md (from plaintext theirs)"
+  assert_gitcrypt_file "$enc_ours"
+  local merged_plain="$BATS_TEST_TMPDIR/mixed_merged_plain"
+  decrypt_gitcrypt_file "$enc_ours" "$merged_plain"
+  grep -qF "alpha.md" "$merged_plain" || fail "missing alpha.md"
+  grep -qF "gamma.md" "$merged_plain" || fail "missing gamma.md (from encrypted ours)"
+  grep -qF "delta.md" "$merged_plain" || fail "missing delta.md (from plaintext theirs)"
 }
 
 @test "merge driver: files shorter than 9 bytes are treated as plaintext" {
