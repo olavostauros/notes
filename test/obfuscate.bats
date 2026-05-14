@@ -394,6 +394,28 @@ setup() {
   grep -q "manifest" "$CALLER_PWD/.git/hooks/pre-commit.d/obfuscation"
 }
 
+@test "encryption pre-commit hook rejects plaintext staged encrypted blobs" {
+  if ! command -v git-crypt >/dev/null; then
+    skip "git-crypt not installed"
+  fi
+
+  ( cd "$CALLER_PWD" && git-crypt init >/dev/null 2>&1 ) || skip "git-crypt init failed"
+  echo "notes/** filter=git-crypt diff=git-crypt" > "$CALLER_PWD/.gitattributes"
+  git -C "$CALLER_PWD" add .gitattributes
+  git -C "$CALLER_PWD" commit -q --no-verify -m "enable encryption"
+
+  notes install-hooks
+
+  local blob
+  blob=$(printf 'aaa00001\talpha.md\n' | git -C "$CALLER_PWD" hash-object -w --stdin)
+  git -C "$CALLER_PWD" update-index --add --cacheinfo 100644 "$blob" notes/.manifest
+
+  run git -C "$CALLER_PWD" commit -m "force plaintext manifest"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Staged files should be encrypted but are plaintext"* ]]
+  [[ "$output" == *"notes/.manifest"* ]]
+}
+
 @test "deobfuscate does not install hooks" {
   notes obfuscate
   git -C "$CALLER_PWD" add -A
