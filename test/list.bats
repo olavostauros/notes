@@ -3,8 +3,8 @@
 load test_helper
 
 setup() {
-  export CALLER_PWD="$BATS_TEST_TMPDIR"
-  mkdir -p "$CALLER_PWD/notes"
+  export NOTES_CALLER_PWD="$BATS_TEST_TMPDIR"
+  mkdir -p "$NOTES_CALLER_PWD/notes"
 }
 
 @test "list shows notes with frontmatter" {
@@ -17,7 +17,7 @@ setup() {
 
 @test "list skips files without frontmatter" {
   notes new -- --slug real --title "Real Note" --tags "test" --updated "2026-03-14"
-  echo "# No frontmatter" > "$CALLER_PWD/notes/plain.md"
+  echo "# No frontmatter" > "$NOTES_CALLER_PWD/notes/plain.md"
 
   run notes list
   [ "$status" -eq 0 ]
@@ -73,7 +73,7 @@ setup() {
 }
 
 @test "list --json parses block-list tags" {
-  cat > "$CALLER_PWD/notes/block-tags.md" <<'EOF'
+  cat > "$NOTES_CALLER_PWD/notes/block-tags.md" <<'EOF'
 ---
 title: Block Tag Note
 tags:
@@ -92,7 +92,7 @@ EOF
 }
 
 @test "list --tag matches block-list tags" {
-  cat > "$CALLER_PWD/notes/block-tags.md" <<'EOF'
+  cat > "$NOTES_CALLER_PWD/notes/block-tags.md" <<'EOF'
 ---
 title: Block Tag Note
 tags:

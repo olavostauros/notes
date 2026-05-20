@@ -12,7 +12,7 @@ source "$MISE_CONFIG_ROOT/lib/hooks.sh"
 require_git
 require_rudi
 
-# Ensure rudi operates on the target repo (shiv shims set CALLER_PWD=$PWD)
+# Ensure rudi operates on the target repo (notes shims set NOTES_CALLER_PWD=$PWD)
 cd "$TARGET_DIR"
 
 NOTES_DIR="${usage_dir:-notes}"
@@ -132,7 +132,7 @@ echo "  Installed hooks"
 if [ "${usage_unlock:-false}" = "true" ]; then
   echo ""
   echo "Unlocking..."
-  cd "$MISE_CONFIG_ROOT" && CALLER_PWD="$TARGET_DIR" mise run -q unlock
+  cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q unlock
   echo ""
   echo "Done! Repo is set up and unlocked."
 else

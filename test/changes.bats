@@ -5,43 +5,43 @@
 load test_helper
 
 setup() {
-  export CALLER_PWD="$BATS_TEST_TMPDIR"
+  export NOTES_CALLER_PWD="$BATS_TEST_TMPDIR"
   source "$REPO_DIR/lib/common.sh"
   source "$REPO_DIR/lib/obfuscate.sh"
   source "$REPO_DIR/lib/suppress.sh"
   source "$REPO_DIR/lib/changes.sh"
 
   # Create a git repo with obfuscated notes
-  git -C "$CALLER_PWD" init -q
-  git -C "$CALLER_PWD" config user.name "Test"
-  git -C "$CALLER_PWD" config user.email "test@test.com"
+  git -C "$NOTES_CALLER_PWD" init -q
+  git -C "$NOTES_CALLER_PWD" config user.name "Test"
+  git -C "$NOTES_CALLER_PWD" config user.email "test@test.com"
 
-  mkdir -p "$CALLER_PWD/notes"
-  echo "# Alpha" > "$CALLER_PWD/notes/alpha.md"
-  echo "# Beta" > "$CALLER_PWD/notes/beta.md"
+  mkdir -p "$NOTES_CALLER_PWD/notes"
+  echo "# Alpha" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "# Beta" > "$NOTES_CALLER_PWD/notes/beta.md"
 
-  MANIFEST="$CALLER_PWD/notes/.manifest"
+  MANIFEST="$NOTES_CALLER_PWD/notes/.manifest"
 
   # Obfuscate, commit, then deobfuscate (simulates normal state)
-  rename_to_obfuscated "$CALLER_PWD/notes" > /dev/null
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q -m "initial"
-  rename_to_readable "$CALLER_PWD/notes" > /dev/null
-  set_status_suppression "$CALLER_PWD/notes"
+  rename_to_obfuscated "$NOTES_CALLER_PWD/notes" > /dev/null
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q -m "initial"
+  rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
+  set_status_suppression "$NOTES_CALLER_PWD/notes"
 }
 
 # ── detect_changes ────────────────────────────────────────────
 
 @test "detect_changes: no changes when files match HEAD" {
-  run detect_changes "$CALLER_PWD/notes"
+  run detect_changes "$NOTES_CALLER_PWD/notes"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
 
 @test "detect_changes: detects modified file" {
-  echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
 
-  run detect_changes "$CALLER_PWD/notes"
+  run detect_changes "$NOTES_CALLER_PWD/notes"
   [ "$status" -eq 0 ]
   [[ "$output" == *"modified"*"alpha.md"* ]]
   # Beta should not appear
@@ -49,42 +49,42 @@ setup() {
 }
 
 @test "detect_changes: detects new file not in manifest" {
-  echo "# Gamma" > "$CALLER_PWD/notes/gamma.md"
+  echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
 
-  run detect_changes "$CALLER_PWD/notes"
+  run detect_changes "$NOTES_CALLER_PWD/notes"
   [ "$status" -eq 0 ]
   [[ "$output" == *"new"*"gamma.md"* ]]
 }
 
 @test "detect_changes: detects new file in manifest but not in HEAD" {
-  echo "# Gamma" > "$CALLER_PWD/notes/gamma.md"
+  echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
   # Manifest entry exists but file was never committed
   printf 'cccccccc\tgamma.md\n' >> "$MANIFEST"
 
-  run detect_changes "$CALLER_PWD/notes"
+  run detect_changes "$NOTES_CALLER_PWD/notes"
   [ "$status" -eq 0 ]
   [[ "$output" == *"new"*"gamma.md"* ]]
 }
 
 @test "detect_changes: detects deleted file" {
   # Remove the readable file and the obfuscated file
-  rm "$CALLER_PWD/notes/alpha.md"
+  rm "$NOTES_CALLER_PWD/notes/alpha.md"
   local alpha_id
   alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
   # The obfuscated file shouldn't exist (we're in deobfuscated state)
   # but make sure it's gone
-  rm -f "$CALLER_PWD/notes/$alpha_id"
+  rm -f "$NOTES_CALLER_PWD/notes/$alpha_id"
 
-  run detect_changes "$CALLER_PWD/notes"
+  run detect_changes "$NOTES_CALLER_PWD/notes"
   [ "$status" -eq 0 ]
   [[ "$output" == *"deleted"*"alpha.md"* ]]
 }
 
 @test "detect_changes: multiple changes detected" {
-  echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
-  echo "# Gamma" > "$CALLER_PWD/notes/gamma.md"
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
 
-  run detect_changes "$CALLER_PWD/notes"
+  run detect_changes "$NOTES_CALLER_PWD/notes"
   [ "$status" -eq 0 ]
   [[ "$output" == *"modified"*"alpha.md"* ]]
   [[ "$output" == *"new"*"gamma.md"* ]]
@@ -92,7 +92,7 @@ setup() {
 
 @test "detect_changes: unchanged files not reported" {
   # Make no changes
-  run detect_changes "$CALLER_PWD/notes"
+  run detect_changes "$NOTES_CALLER_PWD/notes"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
@@ -103,23 +103,23 @@ setup() {
   i=1
   while [ "$i" -le 40 ]; do
     name=$(printf 'note-%02d.md' "$i")
-    printf '# Note %02d\n' "$i" > "$CALLER_PWD/notes/$name"
+    printf '# Note %02d\n' "$i" > "$NOTES_CALLER_PWD/notes/$name"
     i=$((i + 1))
   done
 
-  rename_to_obfuscated "$CALLER_PWD/notes" > /dev/null
-  git -C "$CALLER_PWD" add -A
-  git -C "$CALLER_PWD" commit -q -m "add many notes"
-  rename_to_readable "$CALLER_PWD/notes" > /dev/null
-  set_status_suppression "$CALLER_PWD/notes"
+  rename_to_obfuscated "$NOTES_CALLER_PWD/notes" > /dev/null
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q -m "add many notes"
+  rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
+  set_status_suppression "$NOTES_CALLER_PWD/notes"
 
-  printf '# Note 10 edited\n' > "$CALLER_PWD/notes/note-10.md"
-  printf '# New\n' > "$CALLER_PWD/notes/new.md"
-  rm "$CALLER_PWD/notes/note-20.md"
+  printf '# Note 10 edited\n' > "$NOTES_CALLER_PWD/notes/note-10.md"
+  printf '# New\n' > "$NOTES_CALLER_PWD/notes/new.md"
+  rm "$NOTES_CALLER_PWD/notes/note-20.md"
   delete_id=$(manifest_id_for_name "$MANIFEST" "note-20.md")
-  rm -f "$CALLER_PWD/notes/$delete_id"
+  rm -f "$NOTES_CALLER_PWD/notes/$delete_id"
 
-  run detect_changes "$CALLER_PWD/notes"
+  run detect_changes "$NOTES_CALLER_PWD/notes"
   [ "$status" -eq 0 ]
   [[ "$output" == *"modified"*"note-10.md"* ]]
   [[ "$output" == *"deleted"*"note-20.md"* ]]
@@ -159,7 +159,7 @@ setup() {
 
 @test "set_status_suppression adds exclude entries" {
   local repo_root
-  repo_root=$(git -C "$CALLER_PWD" rev-parse --show-toplevel)
+  repo_root=$(git -C "$NOTES_CALLER_PWD" rev-parse --show-toplevel)
   local exclude="$repo_root/.git/info/exclude"
 
   # Suppression was already set in setup
@@ -172,15 +172,15 @@ setup() {
 
 @test "set_status_suppression gives clean git status" {
   # After setup, git status should be clean
-  run git -C "$CALLER_PWD" status --porcelain
+  run git -C "$NOTES_CALLER_PWD" status --porcelain
   [ -z "$output" ]
 }
 
 @test "clear_status_suppression removes exclude entries" {
-  clear_status_suppression "$CALLER_PWD/notes"
+  clear_status_suppression "$NOTES_CALLER_PWD/notes"
 
   local repo_root
-  repo_root=$(git -C "$CALLER_PWD" rev-parse --show-toplevel)
+  repo_root=$(git -C "$NOTES_CALLER_PWD" rev-parse --show-toplevel)
   local exclude="$repo_root/.git/info/exclude"
 
   # Managed block should be gone
@@ -192,7 +192,7 @@ setup() {
 
 @test "exclude preserves non-managed content" {
   local repo_root
-  repo_root=$(git -C "$CALLER_PWD" rev-parse --show-toplevel)
+  repo_root=$(git -C "$NOTES_CALLER_PWD" rev-parse --show-toplevel)
   local exclude="$repo_root/.git/info/exclude"
 
   # Add custom content before the managed block
@@ -206,8 +206,8 @@ setup() {
   mv "$tmp" "$exclude"
 
   # Re-run suppression (should preserve custom content)
-  clear_status_suppression "$CALLER_PWD/notes"
-  set_status_suppression "$CALLER_PWD/notes"
+  clear_status_suppression "$NOTES_CALLER_PWD/notes"
+  set_status_suppression "$NOTES_CALLER_PWD/notes"
 
   grep -q "# My custom excludes" "$exclude"
   grep -q "build/" "$exclude"
@@ -216,16 +216,16 @@ setup() {
 
 @test "scoped set_status_suppression adds only specified entries" {
   # Clear all first
-  clear_status_suppression "$CALLER_PWD/notes"
+  clear_status_suppression "$NOTES_CALLER_PWD/notes"
 
   local alpha_id
   alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
 
   # Set suppression for just alpha
-  set_status_suppression "$CALLER_PWD/notes" "$alpha_id"
+  set_status_suppression "$NOTES_CALLER_PWD/notes" "$alpha_id"
 
   local repo_root
-  repo_root=$(git -C "$CALLER_PWD" rev-parse --show-toplevel)
+  repo_root=$(git -C "$NOTES_CALLER_PWD" rev-parse --show-toplevel)
   local exclude="$repo_root/.git/info/exclude"
 
   grep -q "notes/alpha.md" "$exclude"
@@ -237,10 +237,10 @@ setup() {
   alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
 
   # Clear just alpha
-  clear_status_suppression "$CALLER_PWD/notes" "$alpha_id"
+  clear_status_suppression "$NOTES_CALLER_PWD/notes" "$alpha_id"
 
   local repo_root
-  repo_root=$(git -C "$CALLER_PWD" rev-parse --show-toplevel)
+  repo_root=$(git -C "$NOTES_CALLER_PWD" rev-parse --show-toplevel)
   local exclude="$repo_root/.git/info/exclude"
 
   ! grep -q "notes/alpha.md" "$exclude"
@@ -250,22 +250,22 @@ setup() {
 # ── stage via git add -f ─────────────────────────────────────
 
 @test "git add -f works despite exclude" {
-  echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
 
   # Normal git add should fail (file is excluded)
-  git -C "$CALLER_PWD" add "$CALLER_PWD/notes/alpha.md" 2>/dev/null || true
-  run git -C "$CALLER_PWD" diff --cached --name-only
+  git -C "$NOTES_CALLER_PWD" add "$NOTES_CALLER_PWD/notes/alpha.md" 2>/dev/null || true
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
   [[ "$output" != *"alpha.md"* ]]
 
   # Force add should work
-  git -C "$CALLER_PWD" add -f "$CALLER_PWD/notes/alpha.md"
-  run git -C "$CALLER_PWD" diff --cached --name-only
+  git -C "$NOTES_CALLER_PWD" add -f "$NOTES_CALLER_PWD/notes/alpha.md"
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
   [[ "$output" == *"alpha.md"* ]]
 }
 
 @test "notes stage: no args skips new notes but stages modified notes" {
-  echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
-  echo "# Gamma" > "$CALLER_PWD/notes/gamma.md"
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
 
   run notes stage
   [ "$status" -eq 0 ]
@@ -273,19 +273,19 @@ setup() {
   [[ "$output" == *"Skipped 1 new note(s)"* ]]
   [[ "$output" == *"new: gamma.md"* ]]
 
-  run git -C "$CALLER_PWD" diff --cached --name-only
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
   [[ "$output" == *"notes/alpha.md"* ]]
   [[ "$output" != *"notes/gamma.md"* ]]
 }
 
 @test "notes stage: explicit file stages a new note" {
-  echo "# Gamma" > "$CALLER_PWD/notes/gamma.md"
+  echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
 
   run notes stage gamma.md
   [ "$status" -eq 0 ]
   [[ "$output" == *"staged: gamma.md"* ]]
 
-  run git -C "$CALLER_PWD" diff --cached --name-only
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
   [[ "$output" == *"notes/gamma.md"* ]]
 }
 
@@ -316,7 +316,7 @@ setup() {
   [ -f "$repo/notes/beta.md" ]
   echo "alpha edit" >> "$repo/notes/alpha.md"
 
-  CALLER_PWD="$repo" run notes stage
+  NOTES_CALLER_PWD="$repo" run notes stage
   [ "$status" -eq 0 ]
   [[ "$output" == *"staged: alpha.md"* ]]
   [[ "$output" == *"Skipped 1 new note(s)"* ]]
@@ -332,9 +332,9 @@ setup() {
   install_obfuscation_hook
   install_deobfuscation_hook
 
-  echo "# Gamma" > "$CALLER_PWD/notes/gamma.md"
+  echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
   printf 'cccccccc\tgamma.md\n' >> "$MANIFEST"
-  echo "# Alpha modified" > "$CALLER_PWD/notes/alpha.md"
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
 
   run notes stage
   [ "$status" -eq 0 ]
@@ -342,13 +342,13 @@ setup() {
   [[ "$output" == *"Skipped 1 new note(s)"* ]]
   [[ "$output" == *"new: gamma.md"* ]]
 
-  git -C "$CALLER_PWD" commit -q -m "update alpha"
+  git -C "$NOTES_CALLER_PWD" commit -q -m "update alpha"
 
-  run git -C "$CALLER_PWD" cat-file --filters HEAD:notes/.manifest
+  run git -C "$NOTES_CALLER_PWD" cat-file --filters HEAD:notes/.manifest
   [[ "$output" == *"alpha.md"* ]]
   [[ "$output" != *"gamma.md"* ]]
 
-  run git -C "$CALLER_PWD" show --name-only --format= HEAD
+  run git -C "$NOTES_CALLER_PWD" show --name-only --format= HEAD
   [[ "$output" != *"gamma"* ]]
 }
 
@@ -361,35 +361,35 @@ setup() {
   install_deobfuscation_hook
 
   # Verify clean status before edit
-  run git -C "$CALLER_PWD" status --porcelain
+  run git -C "$NOTES_CALLER_PWD" status --porcelain
   [ -z "$output" ]
 
   # Edit a note
-  echo "# Alpha v2" > "$CALLER_PWD/notes/alpha.md"
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
 
   # git status should still be clean (exclude hides the change)
-  run git -C "$CALLER_PWD" status --porcelain
+  run git -C "$NOTES_CALLER_PWD" status --porcelain
   [ -z "$output" ]
 
   # But detect_changes should see it
-  run detect_changes "$CALLER_PWD/notes"
+  run detect_changes "$NOTES_CALLER_PWD/notes"
   [[ "$output" == *"modified"*"alpha.md"* ]]
 
   # Stage via notes stage
   notes stage alpha.md
 
   # Commit — hooks handle obfuscation + deobfuscation
-  git -C "$CALLER_PWD" commit -q -m "update alpha"
+  git -C "$NOTES_CALLER_PWD" commit -q -m "update alpha"
 
   # After commit, files should be deobfuscated
-  [ -f "$CALLER_PWD/notes/alpha.md" ]
-  [[ "$(cat "$CALLER_PWD/notes/alpha.md")" == *"Alpha v2"* ]]
+  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"Alpha v2"* ]]
 
   # Status should be clean again
-  run git -C "$CALLER_PWD" status --porcelain
+  run git -C "$NOTES_CALLER_PWD" status --porcelain
   [ -z "$output" ]
 
   # No changes detected
-  run detect_changes "$CALLER_PWD/notes"
+  run detect_changes "$NOTES_CALLER_PWD/notes"
   [ -z "$output" ]
 }

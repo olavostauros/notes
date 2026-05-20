@@ -19,8 +19,8 @@ echo "Note: unlock decrypts all encrypted files in this repo (rudi#5)."
 # Deobfuscate filenames if a manifest exists
 if [ -f "$TARGET_DIR/notes/.manifest" ]; then
   if [ "${usage_force:-false}" = "true" ]; then
-    cd "$MISE_CONFIG_ROOT" && CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate -- --force
+    cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate -- --force
   else
-    cd "$MISE_CONFIG_ROOT" && CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate
+    cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate
   fi
 fi

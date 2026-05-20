@@ -21,9 +21,9 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
   done
 
   if [ "$obfuscated" -eq 1 ]; then
-    # Set CALLER_PWD so the notes shim resolves to this repo
-    export CALLER_PWD
-    CALLER_PWD="$(git rev-parse --show-toplevel)"
+    # Set NOTES_CALLER_PWD so the notes shim resolves to this repo
+    export NOTES_CALLER_PWD
+    NOTES_CALLER_PWD="$(git rev-parse --show-toplevel)"
     # Suppress stdout (rename output) but let stderr through so errors
     # from Layer 1 (mv failures, permission issues) are visible.
     notes deobfuscate >/dev/null

@@ -6,11 +6,58 @@
 load test_helper
 
 setup() {
-  export CALLER_PWD="$BATS_TEST_TMPDIR"
+  export NOTES_CALLER_PWD="$BATS_TEST_TMPDIR"
   source "$REPO_DIR/lib/common.sh"
 
-  mkdir -p "$CALLER_PWD/notes"
-  MANIFEST="$CALLER_PWD/notes/.manifest"
+  mkdir -p "$NOTES_CALLER_PWD/notes"
+  MANIFEST="$NOTES_CALLER_PWD/notes/.manifest"
+}
+
+# ── Caller directory contract ────────────────────────────────
+
+@test "NOTES_CALLER_PWD takes precedence over inherited CALLER_PWD" {
+  local right="$BATS_TEST_TMPDIR/right-repo"
+  local wrong="$BATS_TEST_TMPDIR/wrong-repo"
+  mkdir -p "$right/notes" "$wrong/notes"
+
+  cat > "$right/notes/right.md" <<'EOF'
+---
+title: Right Repo
+tags: []
+---
+EOF
+  cat > "$wrong/notes/wrong.md" <<'EOF'
+---
+title: Wrong Repo
+tags: []
+---
+EOF
+
+  export NOTES_CALLER_PWD="$right"
+  export CALLER_PWD="$wrong"
+  run notes list --json
+  unset CALLER_PWD
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Right Repo"* ]]
+  [[ "$output" != *"Wrong Repo"* ]]
+}
+
+@test "legacy CALLER_PWD fallback still resolves target repo" {
+  local legacy="$BATS_TEST_TMPDIR/legacy-repo"
+  mkdir -p "$legacy/notes"
+  cat > "$legacy/notes/legacy.md" <<'EOF'
+---
+title: Legacy Repo
+tags: []
+---
+EOF
+
+  unset NOTES_CALLER_PWD
+  run bash -c 'cd "$REPO_DIR" && CALLER_PWD="$1" mise run -q list --json' _ "$legacy"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Legacy Repo"* ]]
 }
 
 # ── Confirmation helpers ─────────────────────────────────────
