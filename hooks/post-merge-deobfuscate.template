@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# After pull/merge, refresh readable note filenames from the merged obfuscated
+# files. Unlike post-commit, post-merge runs unconditionally when a manifest is
+# present: a pull can update tracked obfuscated IDs while readable names remain
+# excluded locally, so pre-scanning for obfuscated filenames is the wrong gate.
+set -eo pipefail
+
+NOTES_ROOT="__NOTES_DIR__"
+
+if [ -f "$NOTES_ROOT/.manifest" ]; then
+  # Set CALLER_PWD so the notes shim resolves to this repo.
+  export CALLER_PWD
+  CALLER_PWD="$(git rev-parse --show-toplevel)"
+  # Suppress stdout (rename output) but let stderr through so dirty-readable
+  # refusals and hard failures are visible to the user/agent.
+  notes deobfuscate >/dev/null
+fi

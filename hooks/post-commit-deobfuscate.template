@@ -26,6 +26,6 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
     CALLER_PWD="$(git rev-parse --show-toplevel)"
     # Suppress stdout (rename output) but let stderr through so errors
     # from Layer 1 (mv failures, permission issues) are visible.
-    notes deobfuscate >/dev/null || true
+    notes deobfuscate >/dev/null
   fi
 fi
