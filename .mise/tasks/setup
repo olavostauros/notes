@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 #MISE description="Initialize encryption in the current repo"
-#USAGE flag "--gpg-key <fingerprint>" var=#true help="GPG key fingerprint(s) to add as collaborators"
-#USAGE flag "--pattern <pattern>" var=#true help="Gitattributes patterns to encrypt (default: notes/**)"
-#USAGE flag "--unlock" help="Unlock after setup (for joining an existing repo)"
+#USAGE flag "-y --yes" default=#false help="Skip confirmation prompt"
+#USAGE flag "--gpg-key <fingerprint>" var=#true default="" help="GPG key fingerprint(s) to add as collaborators"
+#USAGE flag "--pattern <pattern>" var=#true default="" help="Gitattributes patterns to encrypt (default: <dir>/**)"
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+#USAGE flag "--unlock" default=#false help="Unlock after setup (for joining an existing repo)"
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -13,6 +15,14 @@ require_rudi
 # Ensure rudi operates on the target repo (shiv shims set CALLER_PWD=$PWD)
 cd "$TARGET_DIR"
 
+NOTES_DIR="${usage_dir:-notes}"
+
+setup_confirmation_message="notes setup will initialize/update git-crypt, .gitattributes, $NOTES_DIR/.manifest, and git hooks for $NOTES_DIR/ in this repo."
+if [ "${usage_unlock:-false}" = "true" ]; then
+  setup_confirmation_message="$setup_confirmation_message It will also unlock/decrypt all git-crypt files after setup."
+fi
+confirm_destructive "$setup_confirmation_message Continue?"
+
 # --- Initialize via rudi ---
 if is_initialized || [ -d "$TARGET_DIR/.git/git-crypt" ]; then
   echo "git-crypt already initialized — updating auxiliary files..."
@@ -22,14 +32,19 @@ else
 fi
 
 # --- Add GPG keys via rudi ---
+keys=()
 if [ -n "${usage_gpg_key:-}" ]; then
+  while IFS= read -r key; do
+    [ -n "$key" ] && keys+=("$key")
+  done < <(printf '%s' "$usage_gpg_key" | xargs printf '%s\n')
+fi
+
+if [ ${#keys[@]} -gt 0 ]; then
   echo ""
   echo "Adding GPG collaborators..."
 
-  IFS=$'\n' read -r -d '' -a keys <<< "$usage_gpg_key" || true
   skipped=0
   for key in "${keys[@]}"; do
-    [ -z "$key" ] && continue
     if gpg --list-keys "$key" &>/dev/null; then
       uid=$(gpg --list-keys --with-colons "$key" 2>/dev/null \
         | awk -F: '/^uid/{print $10; exit}')
@@ -63,13 +78,14 @@ gitattributes_has_encrypted_pattern() {
   ' "$GITATTRIBUTES" 2>/dev/null
 }
 
+patterns=()
 if [ -n "${usage_pattern:-}" ]; then
-  patterns=()
   while IFS= read -r pattern; do
-    patterns+=("$pattern")
+    [ -n "$pattern" ] && patterns+=("$pattern")
   done < <(printf '%s' "$usage_pattern" | xargs printf '%s\n')
-else
-  patterns=("notes/**")
+fi
+if [ ${#patterns[@]} -eq 0 ]; then
+  patterns=("$NOTES_DIR/**")
 fi
 
 missing_patterns=()
@@ -99,7 +115,6 @@ else
 fi
 
 # --- Bootstrap obfuscation manifest ---
-NOTES_DIR="${usage_dir:-notes}"
 if [ ! -f "$TARGET_DIR/$NOTES_DIR/.manifest" ]; then
   mkdir -p "$TARGET_DIR/$NOTES_DIR"
   touch "$TARGET_DIR/$NOTES_DIR/.manifest"

@@ -17,7 +17,7 @@ load test_helper
 }
 
 @test "status shows encryption unlocked after setup" {
-  notes setup
+  notes setup --yes
   run notes status
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "unlocked"
@@ -36,7 +36,7 @@ load test_helper
 }
 
 @test "status shows obfuscation state after obfuscate" {
-  notes setup
+  notes setup --yes
   mkdir -p "$TARGET_DIR/notes"
   echo -e "---\ntitle: Test\n---\n# Test" > "$TARGET_DIR/notes/test-note.md"
   git -C "$TARGET_DIR" add -A
@@ -72,7 +72,7 @@ load test_helper
 }
 
 @test "status --json shows unlocked after setup" {
-  notes setup
+  notes setup --yes
   run notes status -- --json
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.encryption.status == "unlocked"'
@@ -87,7 +87,7 @@ load test_helper
 }
 
 @test "status --json shows note count after obfuscate" {
-  notes setup
+  notes setup --yes
   mkdir -p "$TARGET_DIR/notes"
   echo -e "---\ntitle: Alpha\n---\n# Alpha" > "$TARGET_DIR/notes/alpha.md"
   echo -e "---\ntitle: Beta\n---\n# Beta" > "$TARGET_DIR/notes/beta.md"
@@ -119,7 +119,7 @@ load test_helper
 }
 
 @test "status --json shows deobfuscated after deobfuscate" {
-  notes setup
+  notes setup --yes
   mkdir -p "$TARGET_DIR/notes"
   echo -e "---\ntitle: Test\n---\n# Test" > "$TARGET_DIR/notes/test-note.md"
   git -C "$TARGET_DIR" add -A

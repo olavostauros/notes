@@ -6,7 +6,7 @@
 
 load test_helper
 
-DRIVER="$MISE_CONFIG_ROOT/lib/manifest-merge-driver.sh"
+DRIVER="$REPO_DIR/lib/manifest-merge-driver.sh"
 
 # Helper: create a manifest file from lines
 make_manifest() {
@@ -35,7 +35,7 @@ setup() {
   mkdir -p "$TARGET_DIR"
   git -C "$TARGET_DIR" init -q
   export CALLER_PWD="$TARGET_DIR"
-  source "$MISE_CONFIG_ROOT/lib/common.sh"
+  source "$REPO_DIR/lib/common.sh"
 
   # Temp files for ancestor/ours/theirs
   ANCESTOR="$BATS_TEST_TMPDIR/ancestor"

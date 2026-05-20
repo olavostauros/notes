@@ -476,7 +476,7 @@ EOF
 # tests in control of when obfuscation happens.
 
 @test "pre-commit hook rejects un-obfuscated files in guard mode" {
-  notes setup
+  notes setup --yes
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit --no-verify -q -m "setup"
 
@@ -494,7 +494,7 @@ EOF
 }
 
 @test "pre-commit hook allows obfuscated files" {
-  notes setup
+  notes setup --yes
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit --no-verify -q -m "setup"
 
@@ -506,7 +506,7 @@ EOF
 }
 
 @test "pre-commit hook rejects staged renames in guard mode" {
-  notes setup
+  notes setup --yes
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit --no-verify -q -m "setup"
 
@@ -629,10 +629,10 @@ EOF
 
 @test "obfuscate works without associative arrays (bash 3.2)" {
   # Verify no declare -A in task scripts or hook templates
-  ! grep -q 'declare -A' "$MISE_CONFIG_ROOT/.mise/tasks/obfuscate"
-  ! grep -q 'declare -A' "$MISE_CONFIG_ROOT/.mise/tasks/deobfuscate"
-  ! grep -q 'declare -A' "$MISE_CONFIG_ROOT/hooks/obfuscation.template"
-  ! grep -q 'declare -A' "$MISE_CONFIG_ROOT/hooks/post-commit-deobfuscate.template"
+  ! grep -q 'declare -A' "$REPO_DIR/.mise/tasks/obfuscate"
+  ! grep -q 'declare -A' "$REPO_DIR/.mise/tasks/deobfuscate"
+  ! grep -q 'declare -A' "$REPO_DIR/hooks/obfuscation.template"
+  ! grep -q 'declare -A' "$REPO_DIR/hooks/post-commit-deobfuscate.template"
 }
 
 @test "obfuscate succeeds with single file" {
@@ -647,7 +647,7 @@ EOF
 }
 
 @test "pre-commit hook allows commits when no manifest exists" {
-  notes setup
+  notes setup --yes
   git -C "$CALLER_PWD" add -A
   git -C "$CALLER_PWD" commit -q -m "setup"
 

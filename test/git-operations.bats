@@ -15,7 +15,7 @@ assert_gitcrypt_blob() {
 
 # Override default setup — we need a remote + local pair, not a single repo.
 setup() {
-  source "$MISE_CONFIG_ROOT/lib/common.sh"
+  source "$REPO_DIR/lib/common.sh"
 
   # Create a bare "remote" repo
   export REMOTE="$BATS_TEST_TMPDIR/remote.git"

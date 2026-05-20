@@ -16,7 +16,7 @@ load test_helper
 @test "require_git fails on non-git directory" {
   export CALLER_PWD="$BATS_TEST_TMPDIR/not-a-repo"
   mkdir -p "$CALLER_PWD"
-  source "$MISE_CONFIG_ROOT/lib/common.sh"
+  source "$REPO_DIR/lib/common.sh"
   run require_git
   [ "$status" -ne 0 ]
   [[ "$output" == *"not a git repository"* ]]
@@ -29,7 +29,7 @@ load test_helper
 }
 
 @test "setup writes .gitattributes with default pattern" {
-  run notes setup
+  run notes setup --yes
   [ "$status" -eq 0 ]
 
   [ -f "$TARGET_DIR/.gitattributes" ]
@@ -38,9 +38,9 @@ load test_helper
 }
 
 @test "setup is idempotent" {
-  notes setup
+  notes setup --yes
 
-  run notes setup
+  run notes setup --yes
   [ "$status" -eq 0 ]
   [[ "$output" == *"git-crypt already initialized — updating auxiliary files..."* ]]
   [[ "$output" == *"Requested encrypted patterns already configured"* ]]
@@ -50,7 +50,7 @@ load test_helper
   git -C "$TARGET_DIR" crypt init
   echo ".modules/manifest filter=git-crypt diff=git-crypt" > "$TARGET_DIR/.gitattributes"
 
-  run notes setup
+  run notes setup --yes
   [ "$status" -eq 0 ]
 
   grep -Eq "^\.modules/manifest[[:space:]]+filter=git-crypt" "$TARGET_DIR/.gitattributes"
@@ -61,7 +61,7 @@ load test_helper
   git -C "$TARGET_DIR" crypt init
   echo "notes/** -filter=git-crypt diff=git-crypt" > "$TARGET_DIR/.gitattributes"
 
-  run notes setup
+  run notes setup --yes
   [ "$status" -eq 0 ]
   [[ "$output" == *"Configuring encrypted patterns"* ]]
 
@@ -69,15 +69,26 @@ load test_helper
 }
 
 @test "setup with custom patterns writes them to .gitattributes" {
-  run notes setup -- --pattern "agents/*/Zettels/**" --pattern "notes/private/**"
+  run notes setup --yes --pattern "agents/*/Zettels/**" --pattern "notes/private/**"
   [ "$status" -eq 0 ]
 
   grep -Eq "^agents/\*/Zettels/\*\*[[:space:]]+filter=git-crypt" "$TARGET_DIR/.gitattributes"
   grep -Eq "^notes/private/\*\*[[:space:]]+filter=git-crypt" "$TARGET_DIR/.gitattributes"
 }
 
+@test "setup with custom dir writes manifest and default encrypted pattern there" {
+  run notes setup --yes --dir private-notes
+  [ "$status" -eq 0 ]
+
+  [ -f "$TARGET_DIR/private-notes/.manifest" ]
+  [ ! -f "$TARGET_DIR/notes/.manifest" ]
+  grep -Eq "^private-notes/\*\*[[:space:]]+filter=git-crypt" "$TARGET_DIR/.gitattributes"
+  grep -qF "private-notes/.manifest merge=manifest" "$TARGET_DIR/.gitattributes"
+  grep -q "private-notes" "$TARGET_DIR/.git/hooks/pre-commit.d/obfuscation"
+}
+
 @test "setup installs pre-commit hooks" {
-  notes setup
+  notes setup --yes
 
   # Dispatcher
   [ -x "$TARGET_DIR/.git/hooks/pre-commit" ]
@@ -91,10 +102,22 @@ load test_helper
 }
 
 @test "setup without keys does not add gpg users" {
-  notes setup
+  notes setup --yes
 
   # .git-crypt/keys/default/0/ only exists after first add-gpg-user
   [ ! -d "$TARGET_DIR/.git-crypt/keys/default/0" ]
+}
+
+@test "setup refuses without confirmation before mutation" {
+  run without_confirmation "$BATS_TEST_TMPDIR/missing-tty" notes setup
+
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"confirmation required"* ]]
+  [[ "$output" == *"Re-run with --yes"* ]]
+  [ ! -d "$TARGET_DIR/.git/git-crypt" ]
+  [ ! -d "$TARGET_DIR/.git-crypt" ]
+  [ ! -f "$TARGET_DIR/.gitattributes" ]
+  [ ! -f "$TARGET_DIR/notes/.manifest" ]
 }
 
 # --- verify tests ---
@@ -156,7 +179,7 @@ generate_test_key() {
 }
 
 @test "setup creates empty .manifest for obfuscation bootstrap" {
-  notes setup
+  notes setup --yes
 
   [ -f "$TARGET_DIR/notes/.manifest" ]
   [ ! -s "$TARGET_DIR/notes/.manifest" ]  # empty
@@ -166,7 +189,7 @@ generate_test_key() {
   mkdir -p "$TARGET_DIR/notes"
   printf 'aaa00001\texisting.md\n' > "$TARGET_DIR/notes/.manifest"
 
-  notes setup
+  notes setup --yes
 
   [ -f "$TARGET_DIR/notes/.manifest" ]
   grep -q "existing.md" "$TARGET_DIR/notes/.manifest"
@@ -175,7 +198,7 @@ generate_test_key() {
 # --- setup next-steps ---
 
 @test "setup shows unlock hint when repo has encrypted notes" {
-  notes setup
+  notes setup --yes
   mkdir -p "$TARGET_DIR/notes"
   echo -e "---\ntitle: Test\n---" > "$TARGET_DIR/notes/test.md"
   git -C "$TARGET_DIR" add -A
@@ -184,14 +207,14 @@ generate_test_key() {
   # Simulate encrypted notes by writing a GITCRYPT header
   printf '\x00GITCRYPT\x00' > "$TARGET_DIR/notes/test.md"
 
-  run notes setup
+  run notes setup --yes
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "notes unlock"
   echo "$output" | grep -q "already has encrypted notes"
 }
 
 @test "setup shows unlock hint even when first file is plaintext" {
-  notes setup
+  notes setup --yes
   mkdir -p "$TARGET_DIR/notes/archive"
   # Plaintext file at top level
   echo "readme" > "$TARGET_DIR/notes/README.md"
@@ -200,14 +223,14 @@ generate_test_key() {
   git -C "$TARGET_DIR" add -A
   git -C "$TARGET_DIR" commit -q -m "add notes"
 
-  run notes setup
+  run notes setup --yes
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "notes unlock"
   echo "$output" | grep -q "already has encrypted notes"
 }
 
 @test "setup shows standard next steps on fresh repo" {
-  run notes setup
+  run notes setup --yes
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "Commit the setup"
   # Should NOT mention unlock
@@ -218,7 +241,7 @@ generate_test_key() {
   # --unlock on a fresh repo (no GPG users) will fail at unlock
   # because there's nothing to decrypt. But setup should complete
   # and then attempt unlock.
-  run notes setup -- --unlock
+  run notes setup --yes --unlock
   # Verify setup completed before unlock was attempted
   echo "$output" | grep -q "Installed hooks"
   echo "$output" | grep -q "Unlocking"

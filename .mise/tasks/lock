@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Lock encrypted files (re-encrypt on disk)"
-#USAGE flag "-k --key <name>" help="Lock only this named key's files (default: lock all)"
+#USAGE flag "-y --yes" default=#false help="Skip confirmation prompt"
+#USAGE flag "-k --key <name>" default="" help="Lock only this named key's files (default: lock all)"
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -9,6 +10,12 @@ require_initialized
 require_rudi
 
 cd "$TARGET_DIR"
+
+if [ -n "${usage_key:-}" ]; then
+  confirm_destructive "notes lock will obfuscate/stage notes and re-encrypt encrypted files for key '$usage_key' in this repo. Continue?"
+else
+  confirm_destructive "notes lock will obfuscate/stage notes and re-encrypt all git-crypt files in this repo. Continue?"
+fi
 
 # Obfuscate filenames before locking if currently deobfuscated.
 # The committed state should always be obfuscated — deobfuscation
