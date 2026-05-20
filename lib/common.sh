@@ -7,8 +7,10 @@
 #   - suppress.sh  — status suppression (assume-unchanged + exclude)
 #   - hooks.sh     — git hook installation
 
-# The target repo is always CALLER_PWD (set by shiv shim)
-TARGET_DIR="${CALLER_PWD:-.}"
+# Prefer the notes-specific caller dir to avoid inheriting stale generic
+# caller context from another shiv-managed tool. CALLER_PWD remains a
+# temporary migration fallback for older shims/callers.
+TARGET_DIR="${NOTES_CALLER_PWD:-${CALLER_PWD:-.}}"
 
 NOTES_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTES_REPO_DIR="$(cd "$NOTES_LIB_DIR/.." && pwd)"

@@ -3,8 +3,8 @@
 load test_helper
 
 setup() {
-  export CALLER_PWD="$BATS_TEST_TMPDIR"
-  mkdir -p "$CALLER_PWD/notes"
+  export NOTES_CALLER_PWD="$BATS_TEST_TMPDIR"
+  mkdir -p "$NOTES_CALLER_PWD/notes"
 }
 
 @test "new creates note with frontmatter" {
@@ -19,21 +19,21 @@ setup() {
 @test "new sets tags and dates" {
   notes new -- --slug beta --title "Beta" --tags "a, b" --created "2026-01-01" --updated "2026-03-20"
 
-  run farts get tags "$CALLER_PWD/notes/beta.md"
+  run farts get tags "$NOTES_CALLER_PWD/notes/beta.md"
   [ "${lines[0]}" = "a" ]
   [ "${lines[1]}" = "b" ]
 
-  run farts get created "$CALLER_PWD/notes/beta.md"
+  run farts get created "$NOTES_CALLER_PWD/notes/beta.md"
   [ "$output" = "2026-01-01" ]
 
-  run farts get updated "$CALLER_PWD/notes/beta.md"
+  run farts get updated "$NOTES_CALLER_PWD/notes/beta.md"
   [ "$output" = "2026-03-20" ]
 }
 
 @test "new appends body text" {
   notes new -- --slug with-body --title "Body Note" --body "Some content here."
 
-  run farts body "$CALLER_PWD/notes/with-body.md"
+  run farts body "$NOTES_CALLER_PWD/notes/with-body.md"
   [[ "$output" == *"Some content here."* ]]
 }
 
@@ -49,6 +49,6 @@ setup() {
   notes new -- --slug today-note --title "Today"
   today=$(date +%Y-%m-%d)
 
-  run farts get created "$CALLER_PWD/notes/today-note.md"
+  run farts get created "$NOTES_CALLER_PWD/notes/today-note.md"
   [ "$output" = "$today" ]
 }

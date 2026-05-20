@@ -3,8 +3,8 @@
 load test_helper
 
 setup() {
-  export CALLER_PWD="$BATS_TEST_TMPDIR"
-  mkdir -p "$CALLER_PWD/notes"
+  export NOTES_CALLER_PWD="$BATS_TEST_TMPDIR"
+  mkdir -p "$NOTES_CALLER_PWD/notes"
 }
 
 @test "graph generates graph.md" {
@@ -12,7 +12,7 @@ setup() {
 
   run notes graph
   [ "$status" -eq 0 ]
-  [ -f "$CALLER_PWD/notes/graph.md" ]
+  [ -f "$NOTES_CALLER_PWD/notes/graph.md" ]
 }
 
 @test "graph detects outgoing wikilinks" {
@@ -22,7 +22,7 @@ setup() {
   run notes graph
   [ "$status" -eq 0 ]
 
-  grep -q "note-a.*note-b" "$CALLER_PWD/notes/graph.md"
+  grep -q "note-a.*note-b" "$NOTES_CALLER_PWD/notes/graph.md"
 }
 
 @test "graph detects backlinks" {
@@ -32,8 +32,8 @@ setup() {
   run notes graph
   [ "$status" -eq 0 ]
 
-  grep -q "Backlinks" "$CALLER_PWD/notes/graph.md"
-  grep -q "note-b.*note-a" "$CALLER_PWD/notes/graph.md"
+  grep -q "Backlinks" "$NOTES_CALLER_PWD/notes/graph.md"
+  grep -q "note-b.*note-a" "$NOTES_CALLER_PWD/notes/graph.md"
 }
 
 @test "graph detects explicit relations" {
@@ -43,8 +43,8 @@ setup() {
   run notes graph
   [ "$status" -eq 0 ]
 
-  grep -q "Explicit Relations" "$CALLER_PWD/notes/graph.md"
-  grep -q "note-x.*note-y" "$CALLER_PWD/notes/graph.md"
+  grep -q "Explicit Relations" "$NOTES_CALLER_PWD/notes/graph.md"
+  grep -q "note-x.*note-y" "$NOTES_CALLER_PWD/notes/graph.md"
 }
 
 @test "graph detects orphaned notes" {
@@ -53,14 +53,14 @@ setup() {
   run notes graph
   [ "$status" -eq 0 ]
 
-  grep -q "Orphaned Notes" "$CALLER_PWD/notes/graph.md"
-  grep -q "Lonely Note" "$CALLER_PWD/notes/graph.md"
+  grep -q "Orphaned Notes" "$NOTES_CALLER_PWD/notes/graph.md"
+  grep -q "Lonely Note" "$NOTES_CALLER_PWD/notes/graph.md"
 }
 
 @test "graph empty directory generates valid output" {
   run notes graph
   [ "$status" -eq 0 ]
 
-  [ -f "$CALLER_PWD/notes/graph.md" ]
-  grep -q "No outgoing links yet" "$CALLER_PWD/notes/graph.md"
+  [ -f "$NOTES_CALLER_PWD/notes/graph.md" ]
+  grep -q "No outgoing links yet" "$NOTES_CALLER_PWD/notes/graph.md"
 }

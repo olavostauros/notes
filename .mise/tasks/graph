@@ -43,7 +43,7 @@ def scan_wiki_links(text):
 
 
 def main():
-    target_dir = os.environ.get("CALLER_PWD", ".")
+    target_dir = os.environ.get("NOTES_CALLER_PWD") or os.environ.get("CALLER_PWD", ".")
     notes_subdir = os.environ.get("usage_dir", "notes")
     notes_dir = Path(target_dir) / notes_subdir
 

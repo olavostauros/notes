@@ -10,7 +10,7 @@
 #USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
 set -eo pipefail
 
-TARGET_DIR="${CALLER_PWD:-.}"
+TARGET_DIR="${NOTES_CALLER_PWD:-${CALLER_PWD:-.}}"
 notes_dir="$TARGET_DIR/${usage_dir:-notes}"
 today=$(date +%Y-%m-%d)
 

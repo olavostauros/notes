@@ -8,9 +8,9 @@ set -eo pipefail
 NOTES_ROOT="__NOTES_DIR__"
 
 if [ -f "$NOTES_ROOT/.manifest" ]; then
-  # Set CALLER_PWD so the notes shim resolves to this repo.
-  export CALLER_PWD
-  CALLER_PWD="$(git rev-parse --show-toplevel)"
+  # Set NOTES_CALLER_PWD so the notes shim resolves to this repo.
+  export NOTES_CALLER_PWD
+  NOTES_CALLER_PWD="$(git rev-parse --show-toplevel)"
   # Suppress stdout (rename output) but let stderr through so dirty-readable
   # refusals and hard failures are visible to the user/agent.
   notes deobfuscate >/dev/null

@@ -34,7 +34,7 @@ setup() {
   git -C "$ORIGIN" add -A
   git -C "$ORIGIN" commit -q -m "initial notes"
 
-  export CALLER_PWD="$ORIGIN"
+  export NOTES_CALLER_PWD="$ORIGIN"
   notes obfuscate
   git -C "$ORIGIN" commit -q -m "obfuscate"
 
@@ -51,7 +51,7 @@ setup() {
   git -C "$LOCAL" config user.name "Test"
 
   # Deobfuscate + install hooks (including merge driver) on local
-  export CALLER_PWD="$LOCAL"
+  export NOTES_CALLER_PWD="$LOCAL"
   notes deobfuscate
   notes install-hooks
 }
@@ -61,7 +61,7 @@ setup() {
 @test "pull: new note from remote appears deobfuscated locally" {
   # Origin adds a new note (hooks auto-obfuscate on commit)
   echo -e "---\ntitle: Gamma\n---\n# Gamma" > "$ORIGIN/notes/gamma.md"
-  CALLER_PWD="$ORIGIN" notes stage gamma.md
+  NOTES_CALLER_PWD="$ORIGIN" notes stage gamma.md
   git -C "$ORIGIN" commit -q -m "add gamma"
   git -C "$ORIGIN" push -q
 
@@ -76,17 +76,17 @@ setup() {
 @test "pull: remote edit to existing note is visible locally" {
   # Origin edits alpha (readable on disk, hooks handle obfuscation)
   echo "Updated content" >> "$ORIGIN/notes/alpha.md"
-  CALLER_PWD="$ORIGIN" notes stage alpha.md
+  NOTES_CALLER_PWD="$ORIGIN" notes stage alpha.md
   git -C "$ORIGIN" commit -q -m "edit alpha"
   git -C "$ORIGIN" push -q
 
   # Local: re-obfuscate before pull so readable files don't conflict
-  CALLER_PWD="$LOCAL" notes obfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" checkout -- .
   git -C "$LOCAL" pull -q
 
   # Deobfuscate to see the updated content
-  CALLER_PWD="$LOCAL" notes deobfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes deobfuscate
   [ -f "$LOCAL/notes/alpha.md" ]
   [[ "$(cat "$LOCAL/notes/alpha.md")" == *"Updated content"* ]]
 }
@@ -98,7 +98,7 @@ setup() {
 
   # Origin adds a completely new note and pushes
   echo -e "---\ntitle: Delta\n---\n# Delta" > "$ORIGIN/notes/delta.md"
-  CALLER_PWD="$ORIGIN" notes stage delta.md
+  NOTES_CALLER_PWD="$ORIGIN" notes stage delta.md
   git -C "$ORIGIN" commit -q -m "add delta"
   git -C "$ORIGIN" push -q
 
@@ -115,7 +115,7 @@ setup() {
 @test "pull: remote edit to existing note works even with readable files on disk" {
   # Origin edits alpha and pushes (hooks auto-obfuscate)
   echo "origin change" >> "$ORIGIN/notes/alpha.md"
-  CALLER_PWD="$ORIGIN" notes stage alpha.md
+  NOTES_CALLER_PWD="$ORIGIN" notes stage alpha.md
   git -C "$ORIGIN" commit -q -m "edit alpha"
   git -C "$ORIGIN" push -q
 
@@ -140,7 +140,7 @@ setup() {
   # Origin edits both notes and pushes. Manifest order is alpha, then beta.
   echo "origin alpha change" >> "$ORIGIN/notes/alpha.md"
   echo "origin beta change" >> "$ORIGIN/notes/beta.md"
-  CALLER_PWD="$ORIGIN" notes stage alpha.md beta.md
+  NOTES_CALLER_PWD="$ORIGIN" notes stage alpha.md beta.md
   git -C "$ORIGIN" commit -q -m "edit alpha and beta"
   git -C "$ORIGIN" push -q
 
@@ -166,19 +166,19 @@ setup() {
 @test "merge: concurrent note additions auto-merge via manifest driver" {
   # With the manifest merge driver installed, concurrent additions to
   # .manifest are union-merged automatically.
-  CALLER_PWD="$LOCAL" notes obfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" checkout -- .
 
   # Branch: add a note
   git -C "$LOCAL" checkout -q -b feature
   echo -e "---\ntitle: Feature Note\n---\n# Feature" > "$LOCAL/notes/feature.md"
-  CALLER_PWD="$LOCAL" notes obfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" commit -q --no-verify -m "add feature note"
 
   # Main: add a different note
   git -C "$LOCAL" checkout -q main
   echo -e "---\ntitle: Main Note\n---\n# Main" > "$LOCAL/notes/main-note.md"
-  CALLER_PWD="$LOCAL" notes obfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" commit -q --no-verify -m "add main note"
 
   # Merge succeeds — driver union-merges the manifest
@@ -194,13 +194,13 @@ setup() {
 @test "merge: single-branch addition merges cleanly" {
   # When only one branch adds notes and the other doesn't touch
   # the manifest, merge succeeds.
-  CALLER_PWD="$LOCAL" notes obfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" checkout -- .
 
   # Branch: add a note
   git -C "$LOCAL" checkout -q -b feature
   echo -e "---\ntitle: Feature\n---\n# Feature" > "$LOCAL/notes/feature.md"
-  CALLER_PWD="$LOCAL" notes obfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" commit -q --no-verify -m "add feature"
 
   # Main: add a non-notes file (no manifest change)
@@ -213,7 +213,7 @@ setup() {
   run git -C "$LOCAL" merge feature -q --no-edit
   [ "$status" -eq 0 ]
 
-  CALLER_PWD="$LOCAL" notes deobfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes deobfuscate
   [ -f "$LOCAL/notes/feature.md" ]
 }
 
@@ -221,7 +221,7 @@ setup() {
   alpha_id=$(grep "alpha.md" "$LOCAL/notes/.manifest" | cut -f1)
 
   # Re-obfuscate for clean branch operations
-  CALLER_PWD="$LOCAL" notes obfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" checkout -- .
 
   # Create a branch, edit alpha's obfuscated file directly
@@ -246,13 +246,13 @@ setup() {
 
 @test "rebase: works when only feature branch adds notes" {
   # Rebase succeeds when main doesn't touch the manifest
-  CALLER_PWD="$LOCAL" notes obfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" checkout -- .
 
   # Create a branch with a new note
   git -C "$LOCAL" checkout -q -b feature
   echo -e "---\ntitle: Feature\n---\n# Feature" > "$LOCAL/notes/feature.md"
-  CALLER_PWD="$LOCAL" notes obfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" commit -q --no-verify -m "add feature"
 
   # Main: non-notes change
@@ -266,25 +266,25 @@ setup() {
   run git -C "$LOCAL" rebase main
   [ "$status" -eq 0 ]
 
-  CALLER_PWD="$LOCAL" notes deobfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes deobfuscate
   [ -f "$LOCAL/notes/feature.md" ]
 }
 
 @test "rebase: concurrent note additions auto-merge via manifest driver" {
   # With the merge driver, concurrent manifest changes are union-merged.
-  CALLER_PWD="$LOCAL" notes obfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" checkout -- .
 
   # Feature branch: add a note
   git -C "$LOCAL" checkout -q -b feature
   echo -e "---\ntitle: Feature\n---\n# Feature" > "$LOCAL/notes/feature.md"
-  CALLER_PWD="$LOCAL" notes obfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" commit -q --no-verify -m "add feature"
 
   # Main: add a different note
   git -C "$LOCAL" checkout -q main
   echo -e "---\ntitle: Other\n---\n# Other" > "$LOCAL/notes/other.md"
-  CALLER_PWD="$LOCAL" notes obfuscate
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
   git -C "$LOCAL" commit -q --no-verify -m "add other"
 
   # Rebase succeeds — driver union-merges the manifest
@@ -320,7 +320,7 @@ EOT
   git -C "$repo" add .gitattributes notes/.manifest notes/aaa00001
   git -C "$repo" commit -q -m "init"
 
-  CALLER_PWD="$repo" notes install-hooks >/dev/null
+  NOTES_CALLER_PWD="$repo" notes install-hooks >/dev/null
 
   git -C "$repo" switch -q -c feature
   cat > "$repo/notes/.manifest" <<'EOT'

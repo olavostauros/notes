@@ -15,7 +15,7 @@ setup() {
   git -C "$TARGET_DIR" config user.name "notes-test"
   git -C "$TARGET_DIR" config commit.gpgsign false
 
-  export CALLER_PWD="$TARGET_DIR"
+  export NOTES_CALLER_PWD="$TARGET_DIR"
   source "$REPO_DIR/lib/common.sh"
 
   # Isolated GPG home

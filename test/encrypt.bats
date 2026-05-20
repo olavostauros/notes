@@ -14,8 +14,8 @@ load test_helper
 }
 
 @test "require_git fails on non-git directory" {
-  export CALLER_PWD="$BATS_TEST_TMPDIR/not-a-repo"
-  mkdir -p "$CALLER_PWD"
+  export NOTES_CALLER_PWD="$BATS_TEST_TMPDIR/not-a-repo"
+  mkdir -p "$NOTES_CALLER_PWD"
   source "$REPO_DIR/lib/common.sh"
   run require_git
   [ "$status" -ne 0 ]
