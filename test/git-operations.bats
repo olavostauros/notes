@@ -132,6 +132,35 @@ setup() {
   [[ "$(cat "$LOCAL/notes/alpha.md")" == *"origin change"* ]]
 }
 
+@test "pull: dirty readable does not block safe remote updates later in manifest" {
+  local alpha_id beta_id
+  alpha_id=$(grep "alpha.md" "$LOCAL/notes/.manifest" | cut -f1)
+  beta_id=$(grep "beta.md" "$LOCAL/notes/.manifest" | cut -f1)
+
+  # Origin edits both notes and pushes. Manifest order is alpha, then beta.
+  echo "origin alpha change" >> "$ORIGIN/notes/alpha.md"
+  echo "origin beta change" >> "$ORIGIN/notes/beta.md"
+  CALLER_PWD="$ORIGIN" notes stage alpha.md beta.md
+  git -C "$ORIGIN" commit -q -m "edit alpha and beta"
+  git -C "$ORIGIN" push -q
+
+  # Local has a real edit to alpha.md. The post-merge hook must preserve it,
+  # but that dirty alpha should not leave the unrelated beta readable stale.
+  echo "local alpha edit" >> "$LOCAL/notes/alpha.md"
+  run git -C "$LOCAL" pull -q
+  [ "$status" -eq 0 ]
+
+  [[ "$(cat "$LOCAL/notes/alpha.md")" == *"local alpha edit"* ]]
+  [[ "$(cat "$LOCAL/notes/alpha.md")" != *"origin alpha change"* ]]
+  [ -f "$LOCAL/notes/$alpha_id" ]
+
+  [[ "$(cat "$LOCAL/notes/beta.md")" == *"origin beta change"* ]]
+  [ ! -f "$LOCAL/notes/$beta_id" ]
+
+  [[ "$output" == *"refusing to overwrite dirty readable note: alpha.md"* ]]
+  [[ "$output" == *"post-merge hook failed"* ]]
+}
+
 # ── Merge ─────────────────────────────────────────────────────
 
 @test "merge: concurrent note additions auto-merge via manifest driver" {

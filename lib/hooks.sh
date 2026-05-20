@@ -56,21 +56,23 @@ install_manifest_merge_driver() {
   fi
 }
 
-# Install the post-commit deobfuscation hook.
-# After a commit obfuscates filenames, this restores them for the working tree.
+# Install deobfuscation hooks.
+# After a commit obfuscates filenames, post-commit restores readable names.
+# After a merge/pull updates obfuscated files, post-merge refreshes readable names.
 install_deobfuscation_hook() {
   local notes_dir="${1:-notes}"
-  local template="$HOOKS_DIR/post-commit-deobfuscate.template"
+  local commit_template="$HOOKS_DIR/post-commit-deobfuscate.template"
+  local merge_template="$HOOKS_DIR/post-merge-deobfuscate.template"
 
   # Install for post-commit (deobfuscate after committing)
   ensure_hook_dispatcher post-commit
   local target="$TARGET_DIR/.git/hooks/post-commit.d/deobfuscation"
-  sed "s|__NOTES_DIR__|$notes_dir|g" "$template" > "$target"
+  sed "s|__NOTES_DIR__|$notes_dir|g" "$commit_template" > "$target"
   chmod +x "$target"
 
   # Install for post-merge (deobfuscate after pulling)
   ensure_hook_dispatcher post-merge
   local merge_target="$TARGET_DIR/.git/hooks/post-merge.d/deobfuscation"
-  sed "s|__NOTES_DIR__|$notes_dir|g" "$template" > "$merge_target"
+  sed "s|__NOTES_DIR__|$notes_dir|g" "$merge_template" > "$merge_target"
   chmod +x "$merge_target"
 }

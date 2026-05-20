@@ -222,7 +222,8 @@ _record_deobfuscation_base_hashes() {
 }
 
 # Rename a single obfuscated ID back to its readable name.
-# Returns: 0=renamed, 2=skipped (not found/no match), 1=error (mv failed).
+# Returns: 0=renamed, 2=skipped (not found/no match),
+#          3=dirty readable preserved, 1=error (mv failed).
 _rename_one_to_readable() {
   local notes_dir="$1" manifest="$2" id="$3"
   local relpath
@@ -249,7 +250,7 @@ _rename_one_to_readable() {
         echo "Error: refusing to overwrite dirty readable note: $relpath" >&2
         echo "This may be a real local edit, or a cosmetic editor re-save (trailing-newline trim, BOM, line-ending change)." >&2
         echo "Run 'notes changes $relpath' to inspect; rerun with --force to overwrite intentionally." >&2
-        return 1
+        return 3
       fi
     fi
   fi
@@ -265,7 +266,8 @@ _rename_one_to_readable() {
 
 # Rename obfuscated IDs back to readable names.
 # Outputs "<id>\t<relpath>" per renamed file.
-# Returns 0 on success, 2 if nothing to do, 1 on error.
+# Returns 0 on success, 2 if nothing to do, 3 if dirty readables were
+# preserved, 1 on hard error.
 # Usage: rename_to_readable <notes_dir> [id...]
 #   Without ids: deobfuscates all files listed in the manifest.
 #   With ids: only deobfuscates the specified IDs.
@@ -274,17 +276,19 @@ rename_to_readable() {
   shift
   local scoped_ids=("$@")
   local manifest="$notes_dir/.manifest"
-  local count=0
+  local count=0 dirty_count=0
 
   [ ! -f "$manifest" ] && return 1
 
-  # _rename_one_to_readable returns: 0=renamed, 2=skipped, 1=error.
+  # _rename_one_to_readable returns: 0=renamed, 2=skipped,
+  # 3=dirty readable preserved, 1=hard error.
   if [ ${#scoped_ids[@]} -gt 0 ] && [ -n "${scoped_ids[0]}" ]; then
     for id in "${scoped_ids[@]}"; do
       local _rc
       _rename_one_to_readable "$notes_dir" "$manifest" "$id" && _rc=0 || _rc=$?
       case $_rc in
         0) ((count++)) || true ;;
+        3) ((dirty_count++)) || true ;;
         1) return 1 ;;
       esac
     done
@@ -295,11 +299,13 @@ rename_to_readable() {
       _rename_one_to_readable "$notes_dir" "$manifest" "$id" && _rc=0 || _rc=$?
       case $_rc in
         0) ((count++)) || true ;;
+        3) ((dirty_count++)) || true ;;
         1) return 1 ;;
       esac
     done < "$manifest"
   fi
 
+  [ "$dirty_count" -gt 0 ] && return 3
   [ "$count" -eq 0 ] && return 2
   return 0
 }
