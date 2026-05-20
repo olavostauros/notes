@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # hooks.sh — Git hook installation helpers
 
+HOOKS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOOKS_REPO_DIR="$(cd "$HOOKS_LIB_DIR/.." && pwd)"
+
 # Ensure a hook dispatcher is installed for the given hook type.
 # Usage: ensure_hook_dispatcher <pre-commit|post-commit|post-merge>
 ensure_hook_dispatcher() {
@@ -39,7 +42,7 @@ install_obfuscation_hook() {
 # Configures git to use our custom merge driver for .manifest files.
 install_manifest_merge_driver() {
   local notes_dir="${1:-notes}"
-  local driver_path="$MISE_CONFIG_ROOT/lib/manifest-merge-driver.sh"
+  local driver_path="$HOOKS_REPO_DIR/lib/manifest-merge-driver.sh"
   local gitattributes="$TARGET_DIR/.gitattributes"
 
   # Register the merge driver in git config

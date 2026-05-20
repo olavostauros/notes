@@ -8,8 +8,8 @@ load test_helper
 
 setup() {
   export CALLER_PWD="$BATS_TEST_TMPDIR"
-  source "$MISE_CONFIG_ROOT/lib/common.sh"
-  source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
+  source "$REPO_DIR/lib/common.sh"
+  source "$REPO_DIR/lib/obfuscate.sh"
 
   mkdir -p "$CALLER_PWD/notes"
   echo "# Alpha" > "$CALLER_PWD/notes/alpha.md"

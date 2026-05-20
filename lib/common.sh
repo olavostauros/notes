@@ -10,8 +10,11 @@
 # The target repo is always CALLER_PWD (set by shiv shim)
 TARGET_DIR="${CALLER_PWD:-.}"
 
-# Where the hook source files live (in the notes repo)
-HOOKS_DIR="${MISE_CONFIG_ROOT}/hooks"
+# Locate repo resources from this library file, not from MISE_CONFIG_ROOT.
+# MISE_CONFIG_ROOT is task-scoped and can be stale when libs are sourced by tests.
+NOTES_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NOTES_REPO_DIR="$(cd "$NOTES_LIB_DIR/.." && pwd)"
+HOOKS_DIR="$NOTES_REPO_DIR/hooks"
 
 # ── Require checks ────────────────────────────────────────────
 
@@ -38,6 +41,47 @@ require_initialized() {
     echo "Error: git-crypt not initialized. Run: notes setup" >&2
     exit 1
   fi
+}
+
+# ── Confirmation helpers ─────────────────────────────────────
+
+is_truthy() {
+  case "${1:-}" in
+    true|1|yes|y) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+confirm_destructive() {
+  local message="$1"
+  local tty_path="${NOTES_CONFIRM_TTY:-/dev/tty}"
+  local answer=""
+
+  if is_truthy "${usage_yes:-false}" || is_truthy "${NOTES_YES:-}" || is_truthy "${MISE_YES:-}"; then
+    return 0
+  fi
+
+  if [ ! -c "$tty_path" ] || ! { exec 3<"$tty_path"; exec 4>"$tty_path"; } 2>/dev/null; then
+    { exec 3<&-; exec 4>&-; } 2>/dev/null
+    echo "Error: confirmation required for destructive operation." >&2
+    echo "$message" >&2
+    echo "Re-run with --yes to confirm." >&2
+    return 2
+  fi
+
+  printf '%s [y/N] ' "$message" >&4
+  if ! IFS= read -r answer <&3; then
+    answer=""
+  fi
+  exec 3<&- 4>&-
+
+  case "$answer" in
+    y|Y|yes|YES) return 0 ;;
+    *)
+      echo "Aborted." >&2
+      return 2
+      ;;
+  esac
 }
 
 # ── Path helpers ────────────────────────────────────────────

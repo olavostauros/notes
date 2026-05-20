@@ -1,18 +1,21 @@
-# Tests must be run via `mise run test` (or `notes test`)
-if [ -z "${MISE_CONFIG_ROOT:-}" ]; then
-  echo "MISE_CONFIG_ROOT not set — run tests via: mise run test" >&2
-  exit 1
-fi
+# Derive the repo root from BATS, not MISE_CONFIG_ROOT. Agent sessions can
+# inherit a stale MISE_CONFIG_ROOT from the launcher repo.
+REPO_DIR="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+export REPO_DIR
+
+# Load this repo's declared tools even when a developer runs `bats test/foo.bats`
+# directly instead of going through `mise run test`.
+eval "$(cd "$REPO_DIR" && mise env)"
 
 # Source lib files at file-load time, not inside setup(). Most .bats files in
 # this suite override setup() to set their own CALLER_PWD/fixtures, which
 # shadows the helper's setup() and silently drops the lib sources. Sourcing
 # at top level makes the helper functions available in every test body
 # regardless of which setup wins.
-source "$MISE_CONFIG_ROOT/lib/common.sh"
-source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
-source "$MISE_CONFIG_ROOT/lib/suppress.sh"
-source "$MISE_CONFIG_ROOT/lib/hooks.sh"
+source "$REPO_DIR/lib/common.sh"
+source "$REPO_DIR/lib/obfuscate.sh"
+source "$REPO_DIR/lib/suppress.sh"
+source "$REPO_DIR/lib/hooks.sh"
 
 # notes() wrapper — calls tasks via mise, just like real usage
 # Exported so subshells (e.g. bash -c pipes) can use it too.
@@ -21,9 +24,19 @@ notes() {
     echo "CALLER_PWD not set" >&2
     return 1
   fi
-  cd "$MISE_CONFIG_ROOT" && CALLER_PWD="$CALLER_PWD" mise run -q "$@"
+  cd "$REPO_DIR" && CALLER_PWD="$CALLER_PWD" mise run -q "$@"
 }
 export -f notes
+
+without_confirmation() (
+  local tty_path="$1"
+  shift
+  export usage_yes=true
+  unset NOTES_YES MISE_YES
+  export NOTES_CONFIRM_TTY="$tty_path"
+  "$@"
+)
+export -f without_confirmation
 
 # rudi() wrapper — calls rudi with CALLER_PWD set
 rudi() {

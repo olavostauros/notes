@@ -16,7 +16,7 @@ setup() {
   git -C "$TARGET_DIR" config commit.gpgsign false
 
   export CALLER_PWD="$TARGET_DIR"
-  source "$MISE_CONFIG_ROOT/lib/common.sh"
+  source "$REPO_DIR/lib/common.sh"
 
   # Isolated GPG home
   export GNUPGHOME="$TEST_DIR/gpg"
@@ -40,7 +40,7 @@ generate_test_key() {
 # --- add-user ---
 
 @test "add-user adds collaborator via rudi" {
-  notes setup
+  notes setup --yes
 
   local fpr
   fpr=$(generate_test_key "$GNUPGHOME")
@@ -56,7 +56,7 @@ generate_test_key() {
 # --- lock / unlock round-trip ---
 
 @test "lock and unlock round-trip preserves file content" {
-  notes setup
+  notes setup --yes
 
   local fpr
   fpr=$(generate_test_key "$GNUPGHOME")
@@ -69,7 +69,7 @@ generate_test_key() {
   git -C "$TARGET_DIR" commit -q -m "Add encrypted note"
 
   # Lock
-  run notes lock
+  run notes lock --yes
   [ "$status" -eq 0 ]
 
   # File should not be readable as plaintext
@@ -83,10 +83,33 @@ generate_test_key() {
   grep -q "secret content" "$TARGET_DIR/notes/secret.md"
 }
 
+@test "lock refuses without confirmation before staging or obfuscating" {
+  notes setup --yes
+
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  echo "plain note" > "$TARGET_DIR/notes/plain.md"
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q --no-verify -m "Add encrypted note"
+
+  run without_confirmation "$TEST_DIR/missing-tty" notes lock
+
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"confirmation required"* ]]
+  [[ "$output" == *"Re-run with --yes"* ]]
+  [ -f "$TARGET_DIR/notes/plain.md" ]
+  grep -q "plain note" "$TARGET_DIR/notes/plain.md"
+  ! grep -q "plain.md" "$TARGET_DIR/notes/.manifest"
+  [ -z "$(git -C "$TARGET_DIR" diff --cached --name-only)" ]
+}
+
 # --- status ---
 
 @test "status shows encryption info" {
-  notes setup
+  notes setup --yes
 
   local fpr
   fpr=$(generate_test_key "$GNUPGHOME")
@@ -101,7 +124,7 @@ generate_test_key() {
 
 @test "full workflow: setup → add-user → commit → lock → unlock → verify" {
   # 1. Setup with default pattern
-  run notes setup
+  run notes setup --yes
   [ "$status" -eq 0 ]
   [ -f "$TARGET_DIR/.gitattributes" ]
 
@@ -120,7 +143,7 @@ generate_test_key() {
   git -C "$TARGET_DIR" commit -q -m "Add files"
 
   # 4. Lock
-  notes lock
+  notes lock --yes
   ! grep -q "top secret" "$TARGET_DIR/notes/classified.md" 2>/dev/null
   ! grep -q "also secret" "$TARGET_DIR/notes/private.md" 2>/dev/null
   # Public file should be unaffected
@@ -142,7 +165,7 @@ generate_test_key() {
 # --- lock/unlock + obfuscation chaining ---
 
 setup_encrypted_repo_with_obfuscation() {
-  notes setup
+  notes setup --yes
 
   local fpr
   fpr=$(generate_test_key "$GNUPGHOME")
@@ -176,7 +199,7 @@ setup_encrypted_repo_with_obfuscation() {
   [ -f "$TARGET_DIR/notes/alpha.md" ]
   [ -f "$TARGET_DIR/notes/beta.md" ]
 
-  notes lock
+  notes lock --yes
 
   # Files should be obfuscated (hex IDs, not readable names)
   [ ! -f "$TARGET_DIR/notes/alpha.md" ]
@@ -190,7 +213,7 @@ setup_encrypted_repo_with_obfuscation() {
   skip "git-crypt lock rejects deobfuscated working tree (needs rudi --force)"
   setup_encrypted_repo_with_obfuscation
 
-  notes lock
+  notes lock --yes
   # Files are obfuscated + encrypted
   [ ! -f "$TARGET_DIR/notes/alpha.md" ]
 
@@ -207,7 +230,7 @@ setup_encrypted_repo_with_obfuscation() {
   skip "git-crypt lock rejects deobfuscated working tree (needs rudi --force)"
   setup_encrypted_repo_with_obfuscation
 
-  notes lock
+  notes lock --yes
   notes unlock
 
   grep -q "alpha content" "$TARGET_DIR/notes/alpha.md"
@@ -216,7 +239,7 @@ setup_encrypted_repo_with_obfuscation() {
 
 @test "unlock without manifest does not attempt deobfuscation" {
   # Plain encrypted repo, no obfuscation
-  notes setup
+  notes setup --yes
 
   local fpr
   fpr=$(generate_test_key "$GNUPGHOME")
@@ -227,7 +250,7 @@ setup_encrypted_repo_with_obfuscation() {
   git -C "$TARGET_DIR" add .
   git -C "$TARGET_DIR" commit -q -m "Add note"
 
-  notes lock
+  notes lock --yes
   run notes unlock
   [ "$status" -eq 0 ]
 
@@ -237,7 +260,7 @@ setup_encrypted_repo_with_obfuscation() {
 }
 
 @test "lock obfuscates when setup-created manifest exists" {
-  notes setup
+  notes setup --yes
 
   local fpr
   fpr=$(generate_test_key "$GNUPGHOME")
@@ -253,7 +276,7 @@ setup_encrypted_repo_with_obfuscation() {
   id=$(awk '$2 == "plain.md" { print $1 }' "$TARGET_DIR/notes/.manifest")
   [ -n "$id" ]
 
-  run notes lock
+  run notes lock --yes
   [ "$status" -eq 0 ]
 
   # setup creates .manifest, so lock should keep the committed obfuscated shape.

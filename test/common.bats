@@ -7,10 +7,52 @@ load test_helper
 
 setup() {
   export CALLER_PWD="$BATS_TEST_TMPDIR"
-  source "$MISE_CONFIG_ROOT/lib/common.sh"
+  source "$REPO_DIR/lib/common.sh"
 
   mkdir -p "$CALLER_PWD/notes"
   MANIFEST="$CALLER_PWD/notes/.manifest"
+}
+
+# ── Confirmation helpers ─────────────────────────────────────
+
+@test "confirm_destructive accepts --yes flag" {
+  export usage_yes=true
+  run confirm_destructive "Danger?"
+  unset usage_yes
+  [ "$status" -eq 0 ]
+}
+
+@test "confirm_destructive accepts NOTES_YES" {
+  export NOTES_YES=1
+  run confirm_destructive "Danger?"
+  unset NOTES_YES
+  [ "$status" -eq 0 ]
+}
+
+@test "confirm_destructive accepts MISE_YES" {
+  export MISE_YES=yes
+  run confirm_destructive "Danger?"
+  unset MISE_YES
+  [ "$status" -eq 0 ]
+}
+
+@test "confirm_destructive requires exact truthy env approval" {
+  unset usage_yes MISE_YES
+  export NOTES_YES=TRUE
+  export NOTES_CONFIRM_TTY="$BATS_TEST_TMPDIR/missing-tty"
+  run confirm_destructive "Danger?"
+  unset NOTES_YES NOTES_CONFIRM_TTY
+  [ "$status" -eq 2 ]
+}
+
+@test "confirm_destructive refuses without tty or bypass" {
+  unset usage_yes NOTES_YES MISE_YES
+  export NOTES_CONFIRM_TTY="$BATS_TEST_TMPDIR/missing-tty"
+  run confirm_destructive "Danger?"
+  unset NOTES_CONFIRM_TTY
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"confirmation required"* ]]
+  [[ "$output" == *"Re-run with --yes"* ]]
 }
 
 # ── Manifest helpers ──────────────────────────────────────────

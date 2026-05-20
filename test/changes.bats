@@ -6,10 +6,10 @@ load test_helper
 
 setup() {
   export CALLER_PWD="$BATS_TEST_TMPDIR"
-  source "$MISE_CONFIG_ROOT/lib/common.sh"
-  source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
-  source "$MISE_CONFIG_ROOT/lib/suppress.sh"
-  source "$MISE_CONFIG_ROOT/lib/changes.sh"
+  source "$REPO_DIR/lib/common.sh"
+  source "$REPO_DIR/lib/obfuscate.sh"
+  source "$REPO_DIR/lib/suppress.sh"
+  source "$REPO_DIR/lib/changes.sh"
 
   # Create a git repo with obfuscated notes
   git -C "$CALLER_PWD" init -q
@@ -328,7 +328,7 @@ setup() {
 }
 
 @test "notes stage: skipped new manifest entry does not leak through pre-commit hook" {
-  source "$MISE_CONFIG_ROOT/lib/hooks.sh"
+  source "$REPO_DIR/lib/hooks.sh"
   install_obfuscation_hook
   install_deobfuscation_hook
 
@@ -356,7 +356,7 @@ setup() {
 
 @test "full cycle: edit → stage → commit → clean status" {
   # Install hooks so post-commit deobfuscates
-  source "$MISE_CONFIG_ROOT/lib/hooks.sh"
+  source "$REPO_DIR/lib/hooks.sh"
   install_obfuscation_hook
   install_deobfuscation_hook
 
