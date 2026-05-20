@@ -10,8 +10,6 @@
 # The target repo is always CALLER_PWD (set by shiv shim)
 TARGET_DIR="${CALLER_PWD:-.}"
 
-# Locate repo resources from this library file, not from MISE_CONFIG_ROOT.
-# MISE_CONFIG_ROOT is task-scoped and can be stale when libs are sourced by tests.
 NOTES_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTES_REPO_DIR="$(cd "$NOTES_LIB_DIR/.." && pwd)"
 HOOKS_DIR="$NOTES_REPO_DIR/hooks"
@@ -61,19 +59,25 @@ confirm_destructive() {
     return 0
   fi
 
-  if [ ! -c "$tty_path" ] || ! { exec 3<"$tty_path"; exec 4>"$tty_path"; } 2>/dev/null; then
-    { exec 3<&-; exec 4>&-; } 2>/dev/null
+  if [ ! -c "$tty_path" ] || ! { : <"$tty_path"; } 2>/dev/null || ! { : >"$tty_path"; } 2>/dev/null; then
     echo "Error: confirmation required for destructive operation." >&2
     echo "$message" >&2
     echo "Re-run with --yes to confirm." >&2
     return 2
   fi
 
-  printf '%s [y/N] ' "$message" >&4
-  if ! IFS= read -r answer <&3; then
+  if command -v gum >/dev/null 2>&1; then
+    if gum confirm "$message" <"$tty_path" >"$tty_path" 2>"$tty_path"; then
+      return 0
+    fi
+    echo "Aborted." >&2
+    return 2
+  fi
+
+  { printf '%s [y/N] ' "$message" >"$tty_path"; } 2>/dev/null
+  if ! IFS= read -r answer <"$tty_path"; then
     answer=""
   fi
-  exec 3<&- 4>&-
 
   case "$answer" in
     y|Y|yes|YES) return 0 ;;

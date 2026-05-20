@@ -76,6 +76,17 @@ load test_helper
   grep -Eq "^notes/private/\*\*[[:space:]]+filter=git-crypt" "$TARGET_DIR/.gitattributes"
 }
 
+@test "setup with custom dir writes manifest and default encrypted pattern there" {
+  run notes setup --yes --dir private-notes
+  [ "$status" -eq 0 ]
+
+  [ -f "$TARGET_DIR/private-notes/.manifest" ]
+  [ ! -f "$TARGET_DIR/notes/.manifest" ]
+  grep -Eq "^private-notes/\*\*[[:space:]]+filter=git-crypt" "$TARGET_DIR/.gitattributes"
+  grep -qF "private-notes/.manifest merge=manifest" "$TARGET_DIR/.gitattributes"
+  grep -q "private-notes" "$TARGET_DIR/.git/hooks/pre-commit.d/obfuscation"
+}
+
 @test "setup installs pre-commit hooks" {
   notes setup --yes
 

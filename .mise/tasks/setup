@@ -2,7 +2,8 @@
 #MISE description="Initialize encryption in the current repo"
 #USAGE flag "-y --yes" default=#false help="Skip confirmation prompt"
 #USAGE flag "--gpg-key <fingerprint>" var=#true default="" help="GPG key fingerprint(s) to add as collaborators"
-#USAGE flag "--pattern <pattern>" var=#true default="" help="Gitattributes patterns to encrypt (default: notes/**)"
+#USAGE flag "--pattern <pattern>" var=#true default="" help="Gitattributes patterns to encrypt (default: <dir>/**)"
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
 #USAGE flag "--unlock" default=#false help="Unlock after setup (for joining an existing repo)"
 set -eo pipefail
 
@@ -14,7 +15,9 @@ require_rudi
 # Ensure rudi operates on the target repo (shiv shims set CALLER_PWD=$PWD)
 cd "$TARGET_DIR"
 
-setup_confirmation_message="notes setup will initialize/update git-crypt, .gitattributes, notes/.manifest, and notes git hooks in this repo."
+NOTES_DIR="${usage_dir:-notes}"
+
+setup_confirmation_message="notes setup will initialize/update git-crypt, .gitattributes, $NOTES_DIR/.manifest, and git hooks for $NOTES_DIR/ in this repo."
 if [ "${usage_unlock:-false}" = "true" ]; then
   setup_confirmation_message="$setup_confirmation_message It will also unlock/decrypt all git-crypt files after setup."
 fi
@@ -82,7 +85,7 @@ if [ -n "${usage_pattern:-}" ]; then
   done < <(printf '%s' "$usage_pattern" | xargs printf '%s\n')
 fi
 if [ ${#patterns[@]} -eq 0 ]; then
-  patterns=("notes/**")
+  patterns=("$NOTES_DIR/**")
 fi
 
 missing_patterns=()
@@ -112,7 +115,6 @@ else
 fi
 
 # --- Bootstrap obfuscation manifest ---
-NOTES_DIR="notes"
 if [ ! -f "$TARGET_DIR/$NOTES_DIR/.manifest" ]; then
   mkdir -p "$TARGET_DIR/$NOTES_DIR"
   touch "$TARGET_DIR/$NOTES_DIR/.manifest"
