@@ -4,6 +4,26 @@
 HOOKS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOKS_REPO_DIR="$(cd "$HOOKS_LIB_DIR/.." && pwd)"
 
+_hook_template_value() {
+  printf '%s' "$1" | sed 's/[&|\\]/\\&/g'
+}
+
+_render_notes_hook_template() {
+  local template="${1:?usage: _render_notes_hook_template <template> <notes-dir>}"
+  local notes_dir="${2:?usage: _render_notes_hook_template <template> <notes-dir>}"
+  local mise_bin
+  mise_bin=$(command -v mise) || {
+    echo "Error: mise not found; cannot install notes hooks" >&2
+    return 1
+  }
+
+  sed \
+    -e "s|__NOTES_DIR__|$(_hook_template_value "$notes_dir")|g" \
+    -e "s|__NOTES_TOOL_ROOT__|$(_hook_template_value "$HOOKS_REPO_DIR")|g" \
+    -e "s|__MISE_BIN__|$(_hook_template_value "$mise_bin")|g" \
+    "$template"
+}
+
 # Ensure a hook dispatcher is installed for the given hook type.
 # Usage: ensure_hook_dispatcher <pre-commit|post-commit|post-merge>
 ensure_hook_dispatcher() {
@@ -34,7 +54,7 @@ install_obfuscation_hook() {
   local notes_dir="${1:-notes}"
   ensure_hook_dispatcher pre-commit
   local target="$TARGET_DIR/.git/hooks/pre-commit.d/obfuscation"
-  sed "s|__NOTES_DIR__|$notes_dir|g" "$HOOKS_DIR/obfuscation.template" > "$target"
+  _render_notes_hook_template "$HOOKS_DIR/obfuscation.template" "$notes_dir" > "$target"
   chmod +x "$target"
 }
 
@@ -67,12 +87,12 @@ install_deobfuscation_hook() {
   # Install for post-commit (deobfuscate after committing)
   ensure_hook_dispatcher post-commit
   local target="$TARGET_DIR/.git/hooks/post-commit.d/deobfuscation"
-  sed "s|__NOTES_DIR__|$notes_dir|g" "$commit_template" > "$target"
+  _render_notes_hook_template "$commit_template" "$notes_dir" > "$target"
   chmod +x "$target"
 
   # Install for post-merge (deobfuscate after pulling)
   ensure_hook_dispatcher post-merge
   local merge_target="$TARGET_DIR/.git/hooks/post-merge.d/deobfuscation"
-  sed "s|__NOTES_DIR__|$notes_dir|g" "$merge_template" > "$merge_target"
+  _render_notes_hook_template "$merge_template" "$notes_dir" > "$merge_target"
   chmod +x "$merge_target"
 }

@@ -5,7 +5,16 @@
 set -eo pipefail
 
 NOTES_ROOT="__NOTES_DIR__"
+NOTES_TOOL_ROOT="__NOTES_TOOL_ROOT__"
+MISE_BIN="__MISE_BIN__"
 MODE="${NOTES_OBFUSCATE_HOOK:-auto}"
+
+run_notes() {
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel)"
+  export NOTES_CALLER_PWD="$repo_root"
+  (cd "$NOTES_TOOL_ROOT" && "$MISE_BIN" run -q "$@")
+}
 
 if [ -f "$NOTES_ROOT/.manifest" ]; then
   unobfuscated=()
@@ -22,11 +31,10 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
   if [ "${#unobfuscated[@]}" -gt 0 ]; then
     if [ "$MODE" = "auto" ]; then
       echo "Auto-obfuscating ${#unobfuscated[@]} file(s)..." >&2
-      # Set NOTES_CALLER_PWD so the notes shim resolves to this repo
-      export NOTES_CALLER_PWD
-      NOTES_CALLER_PWD="$(git rev-parse --show-toplevel)"
-      # Pass only the staged unobfuscated files
-      notes obfuscate "${unobfuscated[@]}" >&2
+      # Run the notes package version that installed this hook, not whichever
+      # `notes` command happens to appear first on PATH.
+      # Pass only the staged unobfuscated files.
+      run_notes obfuscate "${unobfuscated[@]}" >&2
     else
       echo "ERROR: Staged notes have non-obfuscated filenames:" >&2
       printf '  %s\n' "${unobfuscated[@]}" >&2

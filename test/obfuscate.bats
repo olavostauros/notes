@@ -558,6 +558,34 @@ EOF
   grep -q "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest"
 }
 
+@test "installed hooks run notes from installer, not PATH" {
+  notes obfuscate
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated"
+
+  notes deobfuscate
+  notes install-hooks
+  git -C "$NOTES_CALLER_PWD" add .gitattributes
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "install hook attributes"
+
+  local fake_bin
+  fake_bin="$BATS_TEST_TMPDIR/fake-bin"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/notes" <<'EOT'
+#!/usr/bin/env bash
+echo "fake notes invoked: $*" >&2
+exit 99
+EOT
+  chmod +x "$fake_bin/notes"
+
+  echo "change" >> "$NOTES_CALLER_PWD/notes/alpha.md"
+  git -C "$NOTES_CALLER_PWD" add -f notes/alpha.md
+
+  run bash -c 'unset -f notes; PATH="$1:$PATH" git -C "$2" commit -m "edit alpha"' _ "$fake_bin" "$NOTES_CALLER_PWD"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"fake notes invoked"* ]]
+}
+
 # --- Post-commit hook ---
 
 @test "install-hooks installs post-commit deobfuscation hook" {
@@ -727,6 +755,36 @@ EOF
   local staged
   staged=$(git -C "$NOTES_CALLER_PWD" diff --cached --name-status)
   [ -z "$staged" ]
+}
+
+@test "post-commit hook preserves valid manifest order during scoped obfuscation" {
+  notes obfuscate
+
+  local alpha_id beta_id gamma_id
+  alpha_id=$(grep $'\talpha\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  beta_id=$(grep $'\tbeta\.md$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  gamma_id=$(grep $'\tgamma\.txt$' "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+
+  # Simulate a historical valid manifest whose order differs from the current
+  # name sort. Scoped pre-commit obfuscation should not create an order-only
+  # dirty worktree by normalizing unrelated manifest order.
+  printf '%s\tgamma.txt\n%s\talpha.md\n%s\tbeta.md\n' \
+    "$gamma_id" "$alpha_id" "$beta_id" > "$NOTES_CALLER_PWD/notes/.manifest"
+  git -C "$NOTES_CALLER_PWD" add -A
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "obfuscated unsorted manifest"
+
+  notes deobfuscate
+  notes install-hooks
+  git -C "$NOTES_CALLER_PWD" add .gitattributes
+  git -C "$NOTES_CALLER_PWD" commit -q --no-verify -m "install hook attributes"
+  [ -z "$(git -C "$NOTES_CALLER_PWD" status --short)" ]
+
+  echo "edited" >> "$NOTES_CALLER_PWD/notes/alpha.md"
+  notes stage alpha.md
+  run git -C "$NOTES_CALLER_PWD" commit -m "edit alpha"
+  [ "$status" -eq 0 ]
+
+  [ -z "$(git -C "$NOTES_CALLER_PWD" status --short)" ]
 }
 
 # --- Post-merge hook ---
