@@ -8,6 +8,13 @@ source "$MISE_CONFIG_ROOT/lib/hooks.sh"
 require_git
 
 notes_dir="${usage_dir:-notes}"
+manifest="$TARGET_DIR/$notes_dir/.manifest"
+
+if ! is_initialized && [ ! -f "$manifest" ]; then
+  echo "No notes manifest found and git-crypt is not initialized; not installing hooks."
+  echo "Run 'notes setup --yes' to initialize notes in this repo."
+  exit 0
+fi
 
 install_encryption_hook
 install_obfuscation_hook "$notes_dir"
