@@ -291,6 +291,101 @@ assert data['notes']['src']['broken_targets'] == []
 "
 }
 
+@test "audit deduplicates a repeated broken target within a single source" {
+  cat > "$NOTES_CALLER_PWD/notes/dup.md" <<'EOF'
+---
+title: Dup
+---
+First [[ghost]] then [[ghost]] then [[ghost]] again.
+EOF
+
+  run notes audit
+  [ "$status" -eq 0 ]
+  # The source's outbound count still reflects all three references
+  # (multiplicity preserved at the aggregate level)...
+  echo "$output" | grep -E "^  dup .* outbound:.*3" >/dev/null
+  # ...but the broken-targets report shows the unique missing stem once,
+  # not three identical rows.
+  [[ "$output" == *"Broken wikilink targets (1):"* ]]
+  [ "$(echo "$output" | grep -c "\[\[ghost\]\]")" -eq 1 ]
+
+  run notes audit -- --json
+  [ "$status" -eq 0 ]
+  echo "$output" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+assert data['notes']['dup']['outbound'] == 3, data['notes']['dup']
+assert data['notes']['dup']['broken_targets'] == ['ghost'], data['notes']['dup']
+"
+}
+
+@test "audit ignores empty-target / empty-alias wikilink shapes" {
+  cat > "$NOTES_CALLER_PWD/notes/shapes.md" <<'EOF'
+---
+title: Shapes
+---
+Empty target with alias only: [[|alias-only]].
+Target with empty alias: [[real|]].
+Whitespace-only target: [[ ]].
+EOF
+  cat > "$NOTES_CALLER_PWD/notes/real.md" <<'EOF'
+---
+title: Real
+---
+Real.
+EOF
+
+  run notes audit -- --json
+  [ "$status" -eq 0 ]
+  echo "$output" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+# [[|alias]] and [[ ]] produce no link; [[real|]] resolves to 'real'.
+assert data['notes']['shapes']['outbound'] == 1, data['notes']['shapes']
+assert data['notes']['shapes']['broken_targets'] == [], data['notes']['shapes']
+assert data['notes']['real']['inbound'] == 1, data['notes']['real']
+"
+}
+
+@test "audit tolerates a UTF-8 BOM at the start of a note" {
+  printf '\xef\xbb\xbf---\ntitle: BOM\ndescription: "See [[some-other-note]]"\n---\n\nBody has [[real]] only.\n' \
+    > "$NOTES_CALLER_PWD/notes/bom.md"
+  cat > "$NOTES_CALLER_PWD/notes/real.md" <<'EOF'
+---
+title: Real
+---
+Real.
+EOF
+
+  run notes audit -- --json
+  [ "$status" -eq 0 ]
+  echo "$output" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+# Frontmatter must be stripped even with a BOM prefix; only the body
+# wikilink counts and there are no broken targets.
+assert data['notes']['bom']['outbound'] == 1, data['notes']['bom']
+assert data['notes']['bom']['broken_targets'] == [], data['notes']['bom']
+assert data['notes']['real']['inbound'] == 1, data['notes']['real']
+"
+}
+
+@test "audit rejects non-positive and non-integer --top values" {
+  seed_corpus
+
+  run notes audit -- --top 0
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--top must be >= 1"* ]]
+
+  run notes audit -- --top -5
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--top must be >= 1"* ]]
+
+  run notes audit -- --top abc
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--top must be an integer"* ]]
+}
+
 @test "audit errors when notes directory is missing" {
   rm -rf "$NOTES_CALLER_PWD/notes"
 
