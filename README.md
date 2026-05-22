@@ -59,6 +59,7 @@ notes unlock
 - **Filename obfuscation** — stores notes with opaque filenames in Git while restoring readable names locally.
 - **Manifest merging** — uses a custom merge driver for `notes/.manifest` so concurrent note additions can merge cleanly.
 - **Safe staging** — stages notes despite local exclude/assume-unchanged rules used for readable working copies.
+- **Wikilink graph telemetry** — `notes audit` reports inbound/outbound link counts per note and surfaces broken `[[targets]]`. Generic; layered analyses (e.g. pattern maturity) consume the `--json` output.
 
 ## Important gotchas
 

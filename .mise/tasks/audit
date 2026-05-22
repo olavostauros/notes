@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+#MISE description="Audit the wikilink graph — top inbound/outbound, broken targets"
+#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--top <n>" help="How many notes to show in top-N lists (default: 10)"
+#USAGE flag "--json" help="Emit full per-note counts as JSON instead of the human-readable summary"
+set -eo pipefail
+
+TARGET_DIR="${NOTES_CALLER_PWD:-${CALLER_PWD:-.}}"
+notes_dir="$TARGET_DIR/${usage_dir:-notes}"
+
+if [ ! -d "$notes_dir" ]; then
+  echo "Error: notes directory not found: $notes_dir" >&2
+  exit 1
+fi
+
+python3 - "$notes_dir" "${usage_top:-10}" "${usage_json:-false}" <<'PY'
+"""
+notes audit — raw wikilink-graph telemetry.
+
+Reports inbound/outbound link counts per note and broken targets
+(wikilinks pointing at notes that don't exist on disk). Deliberately
+generic: no `status:` frontmatter awareness, no "pattern" concept, no
+promotion/demotion logic. Those layered analyses live one level up
+(today: in fold's pattern-audit task — see fold/notes/notes-graph-and-commit-discipline.md).
+
+External wikilinks (e.g. [[KnickKnackLabs/repo#42]], [[fold]]) are
+excluded from broken-target detection because they reference things
+outside this notes directory.
+
+Output:
+  Default (human-readable):
+    - Top-N notes by inbound link count
+    - Top-N notes by outbound link count
+    - Broken targets (sorted)
+
+  --json:
+    {
+      "notes": {
+        "<stem>": {
+          "inbound": <int>,
+          "outbound": <int>,
+          "broken_targets": ["<missing-target>", ...]
+        },
+        ...
+      }
+    }
+"""
+
+import json
+import re
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+notes_dir = Path(sys.argv[1])
+top_n = int(sys.argv[2])
+as_json = sys.argv[3] == "true"
+
+# Wikilinks anywhere in body text. [[target]] or [[target|display]].
+link_re = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
+# Strip fenced code blocks and inline code before scanning so we don't
+# count link-shaped literals in code examples.
+fence_re = re.compile(r"```.*?```", re.S)
+inline_code_re = re.compile(r"`[^`]*`")
+
+# External link prefixes: GitHub-style "Org/repo" references and a
+# few well-known cross-home stems. Matches the convention used by
+# den's notes/audit gardening task so behavior is consistent across
+# the agent ecosystem.
+external_prefixes = (
+    "KnickKnackLabs/",
+    "jdx/",
+    "ricon-family/",
+    "Torbit/",
+    "vn5a6e7/",
+)
+external_exact = {
+    "ABORT",
+    "X",
+    "Y",
+    "Z",
+    # Cross-home wikilinks: fold and home repos can be referenced by
+    # stem from any notes directory; treat as external to avoid
+    # false-positive broken targets.
+    "fold",
+    "home",
+}
+
+
+def is_external(target: str) -> bool:
+    if target in external_exact:
+        return True
+    return any(target.startswith(p) for p in external_prefixes)
+
+
+def link_target_stem(target: str) -> str:
+    """Normalize a wikilink target to a note stem.
+
+    Strips section anchors (#heading), trims whitespace, returns the
+    bare stem the way notes are stored on disk.
+    """
+    return target.split("#", 1)[0].strip()
+
+
+notes = sorted(notes_dir.glob("*.md"))
+stems = {p.stem for p in notes}
+
+inbound: dict[str, int] = defaultdict(int)
+outbound: dict[str, int] = defaultdict(int)
+broken: dict[str, list[str]] = defaultdict(list)
+
+for path in notes:
+    stem = path.stem
+    text = path.read_text(encoding="utf-8", errors="replace")
+    # Strip code blocks before scanning so we don't count examples.
+    stripped = inline_code_re.sub("", fence_re.sub("", text))
+
+    for raw_target in link_re.findall(stripped):
+        target = link_target_stem(raw_target)
+        if not target:
+            continue
+        if is_external(target):
+            continue
+        outbound[stem] += 1
+        if target in stems:
+            inbound[target] += 1
+        else:
+            broken[stem].append(target)
+
+# Ensure every note has a row in the count maps even if it's a
+# zero-link island; makes the JSON output complete and avoids
+# surprising omissions in the top-N rendering.
+for s in stems:
+    inbound.setdefault(s, 0)
+    outbound.setdefault(s, 0)
+
+
+if as_json:
+    payload = {
+        "notes": {
+            stem: {
+                "inbound": inbound[stem],
+                "outbound": outbound[stem],
+                "broken_targets": sorted(broken.get(stem, [])),
+            }
+            for stem in sorted(stems)
+        }
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    sys.exit(0)
+
+
+def fmt_top(counts: dict[str, int], n: int) -> list[tuple[str, int]]:
+    """Sort by count desc, then stem asc for stable output. Trim zeros
+    out of the top list so a sparse corpus doesn't render a page of
+    zero-link entries."""
+    nonzero = [(s, c) for s, c in counts.items() if c > 0]
+    nonzero.sort(key=lambda sc: (-sc[1], sc[0]))
+    return nonzero[:n]
+
+
+def render_top(label: str, counts: dict[str, int], counterpart: dict[str, int]) -> None:
+    rows = fmt_top(counts, top_n)
+    if not rows:
+        print(f"{label}: (no notes have any links yet)")
+        print()
+        return
+    print(f"{label}:")
+    stem_width = max(len(s) for s, _ in rows)
+    for stem, count in rows:
+        other = counterpart[stem]
+        print(
+            f"  {stem.ljust(stem_width)}  "
+            f"inbound: {inbound[stem]:>3}  outbound: {outbound[stem]:>3}"
+        )
+    print()
+
+
+print(f"Scanned {len(notes)} note(s) under {notes_dir}.")
+print()
+render_top(f"Top {top_n} by inbound links", inbound, outbound)
+render_top(f"Top {top_n} by outbound links", outbound, inbound)
+
+broken_pairs = sorted(
+    (src, tgt) for src, tgts in broken.items() for tgt in tgts
+)
+if broken_pairs:
+    print(f"Broken wikilink targets ({len(broken_pairs)}):")
+    src_width = max(len(src) for src, _ in broken_pairs)
+    for src, tgt in broken_pairs:
+        print(f"  {src.ljust(src_width)}  → [[{tgt}]]")
+else:
+    print("Broken wikilink targets: none")
+PY
