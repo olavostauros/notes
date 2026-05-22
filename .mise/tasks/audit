@@ -53,9 +53,18 @@ from collections import defaultdict
 from pathlib import Path
 
 notes_dir = Path(sys.argv[1])
-# Clamp at zero so `--top -5` doesn't slice off rows from the end of
-# the sorted list (which would silently return a weird subset).
-top_n = max(0, int(sys.argv[2]))
+# Reject non-integer / non-positive --top values up front. Clamping
+# silently to zero (an earlier iteration) produced a confusing
+# "no notes have any links yet" empty-rows message even on link-rich
+# corpora; an explicit error is friendlier than a misleading success.
+try:
+    top_n = int(sys.argv[2])
+except ValueError:
+    print(f"Error: --top must be an integer (got {sys.argv[2]!r})", file=sys.stderr)
+    sys.exit(2)
+if top_n < 1:
+    print(f"Error: --top must be >= 1 (got {top_n})", file=sys.stderr)
+    sys.exit(2)
 as_json = sys.argv[3] == "true"
 
 # Wikilinks anywhere in body text. [[target]] or [[target|display]].
@@ -69,7 +78,9 @@ fence_re = re.compile(r"```.*?```", re.S)
 inline_code_re = re.compile(r"`[^`]*`")
 # Strip a leading YAML frontmatter block so wiki-shaped strings inside
 # frontmatter values (e.g. a `description:` field) don't pollute counts.
-frontmatter_re = re.compile(r"\A---\n.*?\n---\n", re.S)
+# Tolerate an optional UTF-8 BOM so files saved by Windows tooling don't
+# silently leak their frontmatter wikilinks into the body scan.
+frontmatter_re = re.compile(r"\A\ufeff?---\n.*?\n---\n", re.S)
 
 
 def is_external(target: str) -> bool:
@@ -97,7 +108,11 @@ stems = {p.stem for p in notes}
 
 inbound: dict[str, int] = defaultdict(int)
 outbound: dict[str, int] = defaultdict(int)
-broken: dict[str, list[str]] = defaultdict(list)
+# Per-source set of broken target stems. We use a set so a note that
+# references the same missing target three times shows up as one broken
+# link, not three identical lines in the report. The aggregate
+# multiplicity is still visible via the source note's `outbound` count.
+broken: dict[str, set[str]] = defaultdict(set)
 
 for path in notes:
     stem = path.stem
@@ -117,7 +132,7 @@ for path in notes:
         if target in stems:
             inbound[target] += 1
         else:
-            broken[stem].append(target)
+            broken[stem].add(target)
 
 # Ensure every note has a row in the count maps even if it's a
 # zero-link island; makes the JSON output complete and avoids
