@@ -49,8 +49,10 @@ rename_to_obfuscated() {
   local manifest="$notes_dir/.manifest"
 
   local to_rename=() to_restore=()
+  local scoped_mode=false
 
   if [ ${#scoped_files[@]} -gt 0 ] && [ -n "${scoped_files[0]}" ]; then
+    scoped_mode=true
     for relpath in "${scoped_files[@]}"; do
       [[ "$relpath" == ".manifest" ]] && continue
       [ ! -f "$notes_dir/$relpath" ] && continue
@@ -143,6 +145,15 @@ rename_to_obfuscated() {
 
   # Clean up empty directories after flattening
   find "$notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+
+  # Scoped re-obfuscation of existing manifest entries should not rewrite the
+  # manifest at all. Re-sorting a valid but differently-ordered manifest creates
+  # an order-only dirty worktree after the pre-commit hook, because scoped
+  # obfuscation intentionally does not stage unchanged manifest mappings.
+  if $scoped_mode && [ ${#to_rename[@]} -eq 0 ]; then
+    rm -f "$new_entries"
+    return 0
+  fi
 
   # Update manifest: merge existing + new entries, sorted by name.
   # An entry is live if either its obfuscated id or readable name is on disk.
