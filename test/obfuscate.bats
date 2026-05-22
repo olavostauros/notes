@@ -383,7 +383,20 @@ setup() {
 
 # --- Hook installation ---
 
+@test "install-hooks no-ops for uninitialized plain notes directories" {
+  run notes install-hooks
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No notes manifest found"* ]]
+  [[ "$output" == *"notes setup --yes"* ]]
+
+  [ ! -e "$NOTES_CALLER_PWD/.gitattributes" ]
+  [ ! -e "$NOTES_CALLER_PWD/.git/hooks/pre-commit" ]
+  [ ! -d "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d" ]
+  [ -z "$(git -C "$NOTES_CALLER_PWD" config --get merge.manifest.driver || true)" ]
+}
+
 @test "install-hooks installs pre-commit hooks" {
+  notes obfuscate
   notes install-hooks
 
   [ -x "$NOTES_CALLER_PWD/.git/hooks/pre-commit" ]
@@ -589,6 +602,7 @@ EOT
 # --- Post-commit hook ---
 
 @test "install-hooks installs post-commit deobfuscation hook" {
+  notes obfuscate
   notes install-hooks
 
   [ -x "$NOTES_CALLER_PWD/.git/hooks/post-commit" ]
@@ -790,6 +804,7 @@ EOT
 # --- Post-merge hook ---
 
 @test "install-hooks installs post-merge deobfuscation hook" {
+  notes obfuscate
   notes install-hooks
 
   [ -x "$NOTES_CALLER_PWD/.git/hooks/post-merge" ]
