@@ -53,44 +53,34 @@ from collections import defaultdict
 from pathlib import Path
 
 notes_dir = Path(sys.argv[1])
-top_n = int(sys.argv[2])
+# Clamp at zero so `--top -5` doesn't slice off rows from the end of
+# the sorted list (which would silently return a weird subset).
+top_n = max(0, int(sys.argv[2]))
 as_json = sys.argv[3] == "true"
 
 # Wikilinks anywhere in body text. [[target]] or [[target|display]].
-link_re = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
+# Targets and aliases stay on a single line (filenames can't contain
+# newlines), so we exclude \n from both capture groups to prevent a
+# stray "[[" earlier in the file from being paired with "]]" much later.
+link_re = re.compile(r"\[\[([^\]|\n]+)(?:\|[^\]\n]*)?\]\]")
 # Strip fenced code blocks and inline code before scanning so we don't
 # count link-shaped literals in code examples.
 fence_re = re.compile(r"```.*?```", re.S)
 inline_code_re = re.compile(r"`[^`]*`")
-
-# External link prefixes: GitHub-style "Org/repo" references and a
-# few well-known cross-home stems. Matches the convention used by
-# den's notes/audit gardening task so behavior is consistent across
-# the agent ecosystem.
-external_prefixes = (
-    "KnickKnackLabs/",
-    "jdx/",
-    "ricon-family/",
-    "Torbit/",
-    "vn5a6e7/",
-)
-external_exact = {
-    "ABORT",
-    "X",
-    "Y",
-    "Z",
-    # Cross-home wikilinks: fold and home repos can be referenced by
-    # stem from any notes directory; treat as external to avoid
-    # false-positive broken targets.
-    "fold",
-    "home",
-}
+# Strip a leading YAML frontmatter block so wiki-shaped strings inside
+# frontmatter values (e.g. a `description:` field) don't pollute counts.
+frontmatter_re = re.compile(r"\A---\n.*?\n---\n", re.S)
 
 
 def is_external(target: str) -> bool:
-    if target in external_exact:
-        return True
-    return any(target.startswith(p) for p in external_prefixes)
+    # GitHub-style "Org/repo[#issue]" references are not notes — treat
+    # any wikilink target containing "/" as external. Callers that need
+    # additional exclusions (e.g. agent-collective stems, template
+    # placeholders) should layer their own audit on top of
+    # `notes audit --json`. Keeping the audit free of
+    # ecosystem-specific names is the same layer-separation discipline
+    # that keeps `status:` frontmatter out of this tool.
+    return "/" in target
 
 
 def link_target_stem(target: str) -> str:
@@ -112,8 +102,10 @@ broken: dict[str, list[str]] = defaultdict(list)
 for path in notes:
     stem = path.stem
     text = path.read_text(encoding="utf-8", errors="replace")
-    # Strip code blocks before scanning so we don't count examples.
-    stripped = inline_code_re.sub("", fence_re.sub("", text))
+    # Strip frontmatter and code blocks so wiki-shaped literals there
+    # don't count as outbound links.
+    body = frontmatter_re.sub("", text, count=1)
+    stripped = inline_code_re.sub("", fence_re.sub("", body))
 
     for raw_target in link_re.findall(stripped):
         target = link_target_stem(raw_target)
@@ -159,7 +151,7 @@ def fmt_top(counts: dict[str, int], n: int) -> list[tuple[str, int]]:
     return nonzero[:n]
 
 
-def render_top(label: str, counts: dict[str, int], counterpart: dict[str, int]) -> None:
+def render_top(label: str, counts: dict[str, int]) -> None:
     rows = fmt_top(counts, top_n)
     if not rows:
         print(f"{label}: (no notes have any links yet)")
@@ -167,19 +159,24 @@ def render_top(label: str, counts: dict[str, int], counterpart: dict[str, int]) 
         return
     print(f"{label}:")
     stem_width = max(len(s) for s, _ in rows)
-    for stem, count in rows:
-        other = counterpart[stem]
+    # Column widths derived from the rows we're about to print so the
+    # `outbound:` label doesn't drift when one row has a 4-digit count
+    # and the others have 2-digit counts.
+    in_width = max(len(str(inbound[s])) for s, _ in rows)
+    out_width = max(len(str(outbound[s])) for s, _ in rows)
+    for stem, _ in rows:
         print(
             f"  {stem.ljust(stem_width)}  "
-            f"inbound: {inbound[stem]:>3}  outbound: {outbound[stem]:>3}"
+            f"inbound: {inbound[stem]:>{in_width}}  "
+            f"outbound: {outbound[stem]:>{out_width}}"
         )
     print()
 
 
 print(f"Scanned {len(notes)} note(s) under {notes_dir}.")
 print()
-render_top(f"Top {top_n} by inbound links", inbound, outbound)
-render_top(f"Top {top_n} by outbound links", outbound, inbound)
+render_top(f"Top {top_n} by inbound links", inbound)
+render_top(f"Top {top_n} by outbound links", outbound)
 
 broken_pairs = sorted(
     (src, tgt) for src, tgts in broken.items() for tgt in tgts

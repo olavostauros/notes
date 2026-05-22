@@ -79,7 +79,7 @@ EOF
   echo "$output" | grep -E "^  alpha .* outbound:.*2" >/dev/null
 }
 
-@test "audit reports broken targets but excludes external prefixes" {
+@test "audit reports broken targets but excludes Org/repo-shaped externals" {
   seed_corpus
 
   run notes audit
@@ -88,7 +88,8 @@ EOF
   [[ "$output" == *"Broken wikilink targets (1):"* ]]
   [[ "$output" == *"epsilon"* ]]
   [[ "$output" == *"[[doesnt-exist]]"* ]]
-  # The external KnickKnackLabs/repo target must NOT show up as broken.
+  # Any target containing "/" (GitHub-style Org/repo) is external by
+  # structure and must NOT show up as broken.
   [[ "$output" != *"KnickKnackLabs/repo"* ]]
 }
 
@@ -205,6 +206,88 @@ data = json.load(sys.stdin)
 assert data['notes']['target']['inbound'] == 1, data['notes']['target']
 assert data['notes']['aliased']['outbound'] == 1, data['notes']['aliased']
 assert data['notes']['aliased']['broken_targets'] == []
+"
+}
+
+@test "audit ignores empty, unclosed, and nested-bracket wikilink shapes" {
+  cat > "$NOTES_CALLER_PWD/notes/malformed.md" <<'EOF'
+---
+title: Malformed
+---
+Empty target: [[]].
+Unclosed: [[no-close
+Nested: [[a[b]c]]
+EOF
+  cat > "$NOTES_CALLER_PWD/notes/real-target.md" <<'EOF'
+---
+title: Real
+---
+Bare content.
+EOF
+
+  run notes audit -- --json
+  [ "$status" -eq 0 ]
+  echo "$output" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+# Each malformed shape produces zero outbound and zero broken targets.
+assert data['notes']['malformed']['outbound'] == 0, data['notes']['malformed']
+assert data['notes']['malformed']['broken_targets'] == [], data['notes']['malformed']
+"
+}
+
+@test "audit ignores wikilinks inside YAML frontmatter" {
+  cat > "$NOTES_CALLER_PWD/notes/described.md" <<'EOF'
+---
+title: Described
+description: "See [[some-other-note]] for context."
+---
+Body has [[real-target]] only.
+EOF
+  cat > "$NOTES_CALLER_PWD/notes/real-target.md" <<'EOF'
+---
+title: Real
+---
+Content.
+EOF
+
+  run notes audit -- --json
+  [ "$status" -eq 0 ]
+  echo "$output" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+# Frontmatter wikilink must not count as outbound or broken.
+# Body wikilink to real-target is the only one that counts.
+assert data['notes']['described']['outbound'] == 1, data['notes']['described']
+assert data['notes']['described']['broken_targets'] == [], data['notes']['described']
+assert data['notes']['real-target']['inbound'] == 1, data['notes']['real-target']
+"
+}
+
+@test "audit attributes [[target|alias#anchor]] to target" {
+  cat > "$NOTES_CALLER_PWD/notes/src.md" <<'EOF'
+---
+title: Src
+---
+Link with alias and anchor: [[target|see this#section]].
+EOF
+  cat > "$NOTES_CALLER_PWD/notes/target.md" <<'EOF'
+---
+title: Target
+---
+Real.
+EOF
+
+  run notes audit -- --json
+  [ "$status" -eq 0 ]
+  echo "$output" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+# Aliased + anchor: capture group is target only, anchor on the alias
+# side never reaches the link_target_stem normalizer.
+assert data['notes']['target']['inbound'] == 1, data['notes']['target']
+assert data['notes']['src']['outbound'] == 1, data['notes']['src']
+assert data['notes']['src']['broken_targets'] == []
 "
 }
 
