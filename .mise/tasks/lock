@@ -30,9 +30,9 @@ if [ -f "$TARGET_DIR/notes/.manifest" ]; then
 fi
 
 if [ -n "${usage_key:-}" ]; then
-  CALLER_PWD="$TARGET_DIR" rudi lock --key "$usage_key"
+  RUDI_CALLER_PWD="$TARGET_DIR" rudi lock --key "$usage_key" # codebase:ignore caller-pwd-contract -- invoking rudi requires rudi's package-scoped caller var
 else
-  CALLER_PWD="$TARGET_DIR" rudi lock
+  RUDI_CALLER_PWD="$TARGET_DIR" rudi lock # codebase:ignore caller-pwd-contract -- invoking rudi requires rudi's package-scoped caller var
   # Known limitation: rudi lock without --key locks ALL git-crypt-encrypted
   # files, not just notes. Tracked in KnickKnackLabs/rudi#5.
   echo "Note: lock re-encrypts all encrypted files in this repo (rudi#5)."

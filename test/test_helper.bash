@@ -38,14 +38,13 @@ without_confirmation() (
 )
 export -f without_confirmation
 
-# rudi() wrapper — calls rudi against the same target repo. rudi still uses
-# the legacy generic caller-dir contract, so translate at the boundary.
+# rudi() wrapper — calls rudi against the same target repo.
 rudi() {
   if [ -z "${NOTES_CALLER_PWD:-}" ]; then
     echo "NOTES_CALLER_PWD not set" >&2
     return 1
   fi
-  CALLER_PWD="$NOTES_CALLER_PWD" command rudi "$@"
+  RUDI_CALLER_PWD="$NOTES_CALLER_PWD" command rudi "$@"
 }
 export -f rudi
 
