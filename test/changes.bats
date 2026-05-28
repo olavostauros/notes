@@ -289,6 +289,24 @@ setup() {
   [[ "$output" == *"notes/gamma.md"* ]]
 }
 
+@test "notes stage: refuses dual-present differing readable and obfuscated pair" {
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+
+  echo "# Alpha local edit" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "# Alpha incoming upstream" > "$NOTES_CALLER_PWD/notes/$alpha_id"
+
+  run notes stage alpha.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"incomplete deobfuscation"* ]]
+  [[ "$output" == *"alpha.md"* ]]
+  [[ "$output" == *"notes deobfuscate"* ]]
+  [[ "$output" == *"notes changes alpha.md"* ]]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [[ "$output" != *"notes/alpha.md"* ]]
+}
+
 @test "notes stage: no args skips readable files left from another branch" {
   local repo="$BATS_TEST_TMPDIR/branch-repo"
   mkdir -p "$repo/notes"

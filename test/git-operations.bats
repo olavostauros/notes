@@ -158,7 +158,18 @@ setup() {
   [ ! -f "$LOCAL/notes/$beta_id" ]
 
   [[ "$output" == *"refusing to overwrite dirty readable note: alpha.md"* ]]
+  [[ "$output" == *"git completed, but notes deobfuscation is incomplete"* ]]
   [[ "$output" == *"post-merge hook failed"* ]]
+
+  NOTES_CALLER_PWD="$LOCAL" run notes status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Incomplete deobfuscation"* ]]
+  [[ "$output" == *"alpha.md"* ]]
+
+  NOTES_CALLER_PWD="$LOCAL" run notes stage alpha.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"incomplete deobfuscation"* ]]
+  [[ "$output" == *"notes changes alpha.md"* ]]
 }
 
 # ── Merge ─────────────────────────────────────────────────────
