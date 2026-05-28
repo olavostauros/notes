@@ -278,6 +278,17 @@ setup() {
   [[ "$output" != *"notes/gamma.md"* ]]
 }
 
+@test "notes stage: no args ignores inherited usage_files" {
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  usage_files="gamma.md" run notes stage
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: alpha.md"* ]]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [[ "$output" == *"notes/alpha.md"* ]]
+}
+
 @test "notes stage: explicit file stages a new note" {
   echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
 

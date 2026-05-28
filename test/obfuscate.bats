@@ -368,6 +368,20 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/$id" ]
 }
 
+@test "deobfuscate ignores inherited usage_files without explicit IDs" {
+  notes obfuscate
+  local alpha_id beta_id gamma_id
+  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  beta_id=$(grep "beta.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  gamma_id=$(grep "gamma.txt" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+
+  usage_files="$alpha_id" run notes deobfuscate -- --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$alpha_id → alpha.md"* ]]
+  [[ "$output" == *"$beta_id → beta.md"* ]]
+  [[ "$output" == *"$gamma_id → gamma.txt"* ]]
+}
+
 @test "round-trip preserves all content and metadata" {
   notes obfuscate
   notes deobfuscate
