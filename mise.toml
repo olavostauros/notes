@@ -1,5 +1,3 @@
-min_version = "2026.5.5"
-
 [settings]
 quiet = true
 task_output = "interleave"
