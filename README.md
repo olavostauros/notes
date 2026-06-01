@@ -65,6 +65,7 @@ notes unlock
 - `notes lock` currently re-encrypts **all git-crypt files in the repo**, not just `notes/` files. This is a `rudi` limitation tracked separately.
 - Use `notes stage` for notes, not raw `git add notes/`; readable note names are intentionally excluded locally.
 - After pulling shared note repos, inspect `notes status` and `notes changes --summary` before committing follow-up changes.
+- `notes unlock` / `notes deobfuscate` reconcile stale readable files left by upstream note deletion or rename. Clean generated stale files are removed; dirty or unproven stale files are moved to `.git/info/notes-stale-readable/` so they cannot be accidentally staged as new notes.
 
 ## Development
 

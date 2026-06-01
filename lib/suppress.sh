@@ -259,3 +259,221 @@ clear_status_suppression() {
   # Remove exclude entries for readable names
   remove_exclude_entries "$abs_notes_dir" "${scoped_ids[@]}"
 }
+
+_note_relpath_is_safe() {
+  local relpath="$1"
+  case "$relpath" in
+    ""|/*|.|..|../*|*/../*|.manifest) return 1 ;;
+  esac
+  return 0
+}
+
+# Print readable relpaths from notes' managed .git/info/exclude block.
+# Output: <relpath>
+_managed_exclude_readable_relpaths() {
+  local abs_notes_dir="${1:?usage: _managed_exclude_readable_relpaths <abs_notes_dir>}"
+  resolve_notes_dir "$abs_notes_dir" || return
+  local repo_root="$RESOLVED_REPO_ROOT"
+  local notes_dir="$RESOLVED_NOTES_DIR"
+  local exclude_file="$repo_root/.git/info/exclude"
+
+  [ -f "$exclude_file" ] || return 0
+
+  local in_block=false line relpath
+  while IFS= read -r line; do
+    if [ "$line" = "$EXCLUDE_BEGIN" ]; then
+      in_block=true
+      continue
+    fi
+    if [ "$line" = "$EXCLUDE_END" ]; then
+      in_block=false
+      continue
+    fi
+    $in_block || continue
+    [ -n "$line" ] || continue
+
+    case "$line" in
+      "$notes_dir"/*) relpath="${line#"$notes_dir"/}" ;;
+      *) continue ;;
+    esac
+    _note_relpath_is_safe "$relpath" || continue
+    printf '%s\n' "$relpath"
+  done < "$exclude_file"
+}
+
+# Detect generated readable files that belonged to a previous manifest state but
+# are no longer current. These files are dangerous because the managed exclude
+# block can hide them from git while `notes changes` would otherwise present
+# them as intentional new notes.
+#
+# Output: <clean|dirty>\t<relpath>
+#   clean: content matches a known generated readable hash and may be removed
+#   dirty: content differs or cannot be proven generated and must be preserved
+#          outside notes/ before staging proceeds
+#
+# Requires _deobfuscation_state_file from obfuscate.sh when state exists.
+detect_stale_readable_notes() {
+  local abs_notes_dir="${1:?usage: detect_stale_readable_notes <abs_notes_dir>}"
+  local manifest="$abs_notes_dir/.manifest"
+  [ -f "$manifest" ] || return 0
+
+  resolve_notes_dir "$abs_notes_dir" || return
+  local repo_root="$RESOLVED_REPO_ROOT"
+
+  local tmp_dir current_names candidates state_hashes state state_candidates
+  tmp_dir=$(mktemp -d) || return 1
+  current_names="$tmp_dir/current-names"
+  candidates="$tmp_dir/candidates"
+  state_hashes="$tmp_dir/state-hashes"
+  state_candidates="$tmp_dir/state-candidates"
+  : > "$current_names"
+  : > "$candidates"
+  : > "$state_hashes"
+  : > "$state_candidates"
+
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    printf '%s\n' "$relpath" >> "$current_names"
+  done < "$manifest"
+
+  state=""
+  if declare -F _deobfuscation_state_file >/dev/null 2>&1; then
+    state=$(_deobfuscation_state_file "$abs_notes_dir" 2>/dev/null || true)
+  fi
+
+  if [ -n "$state" ] && [ -f "$state" ]; then
+    awk -F '\t' '
+      NF >= 3 && $2 != "" && $3 != "" { latest[$2]=$3 }
+      END { for (path in latest) print path "\t" latest[path] }
+    ' "$state" | sort > "$state_candidates"
+    cat "$state_candidates" >> "$candidates"
+
+    awk -F '\t' '
+      NF >= 3 && $3 != "" { print $3; next }
+      NF >= 2 && $2 != "" { print $2 }
+    ' "$state" | sort -u > "$state_hashes"
+  fi
+
+  while IFS= read -r relpath; do
+    [ -n "$relpath" ] || continue
+    printf '%s\t\n' "$relpath" >> "$candidates"
+  done < <(_managed_exclude_readable_relpaths "$abs_notes_dir")
+
+  if [ ! -s "$candidates" ]; then
+    rm -rf "$tmp_dir"
+    return 0
+  fi
+
+  local relpaths relpath file known_hash current_hash state_label
+  relpaths="$tmp_dir/relpaths"
+  cut -f1 "$candidates" | sort -u > "$relpaths"
+
+  while IFS= read -r relpath; do
+    [ -n "$relpath" ] || continue
+    _note_relpath_is_safe "$relpath" || continue
+    grep -Fxq "$relpath" "$current_names" && continue
+
+    file="$abs_notes_dir/$relpath"
+    [ -f "$file" ] || continue
+
+    known_hash=$(awk -F '\t' -v wanted="$relpath" '$1 == wanted && $2 != "" { found=$2 } END { print found }' "$candidates")
+    current_hash=$(git -C "$repo_root" hash-object -- "$file" 2>/dev/null) || continue
+
+    state_label="dirty"
+    if [ -n "$known_hash" ] && [ "$current_hash" = "$known_hash" ]; then
+      state_label="clean"
+    elif [ -s "$state_hashes" ] && grep -Fxq "$current_hash" "$state_hashes"; then
+      # Compatibility with legacy state rows (<id>\t<hash>) that did not record
+      # readable paths. The managed exclude proves this path was notes-managed;
+      # a matching generated-content hash proves it is safe to remove.
+      state_label="clean"
+    fi
+
+    printf '%s\t%s\n' "$state_label" "$relpath"
+  done < "$relpaths"
+
+  rm -rf "$tmp_dir"
+}
+
+_stale_readable_quarantine_path() {
+  local repo_root="$1" relpath="$2"
+  local base="$repo_root/.git/info/notes-stale-readable/$relpath"
+  local dest="$base"
+  local i=1
+
+  while [ -e "$dest" ]; do
+    dest="$base.$i"
+    i=$((i + 1))
+  done
+
+  printf '%s' "$dest"
+}
+
+# Reconcile stale readable files left behind by note deletion/rename. Clean
+# generated readables are removed; dirty/unproven readables are moved out of
+# notes/ so they cannot be accidentally staged as new notes.
+#
+# Output: <removed|quarantined>\t<relpath>[\t<quarantine-path>]
+reconcile_stale_readable_notes() {
+  local abs_notes_dir="${1:?usage: reconcile_stale_readable_notes <abs_notes_dir>}"
+  local manifest="$abs_notes_dir/.manifest"
+  [ -f "$manifest" ] || return 0
+
+  resolve_notes_dir "$abs_notes_dir" || return
+  local repo_root="$RESOLVED_REPO_ROOT"
+
+  local stale relpath state_label file dest
+  stale=$(detect_stale_readable_notes "$abs_notes_dir") || return 1
+  [ -n "$stale" ] || return 0
+
+  while IFS=$'\t' read -r state_label relpath; do
+    [ -n "$state_label" ] || continue
+    _note_relpath_is_safe "$relpath" || continue
+    file="$abs_notes_dir/$relpath"
+    [ -f "$file" ] || continue
+
+    case "$state_label" in
+      clean)
+        rm -f "$file" || return 1
+        printf 'removed\t%s\n' "$relpath"
+        ;;
+      dirty)
+        dest=$(_stale_readable_quarantine_path "$repo_root" "$relpath")
+        mkdir -p "$(dirname "$dest")" || return 1
+        mv "$file" "$dest" || return 1
+        printf 'quarantined\t%s\t%s\n' "$relpath" "$dest"
+        ;;
+    esac
+  done <<< "$stale"
+
+  find "$abs_notes_dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+}
+
+# Rebuild all derived git-status suppression from the current manifest. Unlike
+# set_status_suppression, this intentionally drops stale managed exclude entries
+# and clears assume-unchanged for IDs known from previous deobfuscation state.
+rebuild_status_suppression() {
+  local abs_notes_dir="${1:?usage: rebuild_status_suppression <abs_notes_dir>}"
+  local manifest="$abs_notes_dir/.manifest"
+  [ -f "$manifest" ] || return 0
+
+  resolve_notes_dir "$abs_notes_dir" || return
+  local repo_root="$RESOLVED_REPO_ROOT"
+  local notes_dir="$RESOLVED_NOTES_DIR"
+  local exclude_file="$repo_root/.git/info/exclude"
+  local state=""
+
+  if declare -F _deobfuscation_state_file >/dev/null 2>&1; then
+    state=$(_deobfuscation_state_file "$abs_notes_dir" 2>/dev/null || true)
+  fi
+  if [ -n "$state" ] && [ -f "$state" ]; then
+    while IFS= read -r id; do
+      [ -n "$id" ] || continue
+      git -C "$repo_root" update-index --no-assume-unchanged "$notes_dir/$id" 2>/dev/null || true
+    done < <(awk -F '\t' '$1 != "" { print $1 }' "$state" | sort -u)
+  fi
+
+  mkdir -p "$(dirname "$exclude_file")"
+  _rewrite_exclude_block "$exclude_file"
+  set_status_suppression "$abs_notes_dir"
+}

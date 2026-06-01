@@ -25,9 +25,9 @@ _render_notes_hook_template() {
 }
 
 # Ensure a hook dispatcher is installed for the given hook type.
-# Usage: ensure_hook_dispatcher <pre-commit|post-commit|post-merge>
+# Usage: ensure_hook_dispatcher <pre-commit|post-commit|post-merge|post-checkout>
 ensure_hook_dispatcher() {
-  local hook_type="${1:?usage: ensure_hook_dispatcher <pre-commit|post-commit|post-merge>}"
+  local hook_type="${1:?usage: ensure_hook_dispatcher <pre-commit|post-commit|post-merge|post-checkout>}"
   local hooks_dir="$TARGET_DIR/.git/hooks"
   local dispatcher="$hooks_dir/$hook_type"
 
@@ -79,10 +79,12 @@ install_manifest_merge_driver() {
 # Install deobfuscation hooks.
 # After a commit obfuscates filenames, post-commit restores readable names.
 # After a merge/pull updates obfuscated files, post-merge refreshes readable names.
+# After a branch checkout changes the manifest, post-checkout reconciles stale names.
 install_deobfuscation_hook() {
   local notes_dir="${1:-notes}"
   local commit_template="$HOOKS_DIR/post-commit-deobfuscate.template"
   local merge_template="$HOOKS_DIR/post-merge-deobfuscate.template"
+  local checkout_template="$HOOKS_DIR/post-checkout-deobfuscate.template"
 
   # Install for post-commit (deobfuscate after committing)
   ensure_hook_dispatcher post-commit
@@ -95,4 +97,10 @@ install_deobfuscation_hook() {
   local merge_target="$TARGET_DIR/.git/hooks/post-merge.d/deobfuscation"
   _render_notes_hook_template "$merge_template" "$notes_dir" > "$merge_target"
   chmod +x "$merge_target"
+
+  # Install for post-checkout (deobfuscate after branch checkout)
+  ensure_hook_dispatcher post-checkout
+  local checkout_target="$TARGET_DIR/.git/hooks/post-checkout.d/deobfuscation"
+  _render_notes_hook_template "$checkout_template" "$notes_dir" > "$checkout_target"
+  chmod +x "$checkout_target"
 }
