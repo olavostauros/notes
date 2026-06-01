@@ -183,9 +183,15 @@ for relpath in "${to_stage[@]}"; do
       fi
 
       tmp_manifest=$(mktemp) || exit 1
+      manifest_backup=$(mktemp) || exit 1
+      cp "$manifest" "$manifest_backup"
       awk -F '\t' -v path="$relpath" '$2 != path { print $0 }' "$manifest" > "$tmp_manifest"
       mv -f "$tmp_manifest" "$manifest"
-      git -C "$TARGET_DIR" add -f "$notes_dir/.manifest"
+      if ! git -C "$TARGET_DIR" add -f "$notes_dir/.manifest"; then
+        mv -f "$manifest_backup" "$manifest"
+        exit 1
+      fi
+      rm -f "$manifest_backup"
       echo "  staged (delete): $relpath"
     fi
   fi
