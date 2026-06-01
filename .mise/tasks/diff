@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+#MISE description="Show readable note diffs for the working tree, refs, or a PR"
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--pr <number>" default="" help="Diff a GitHub PR from the current repo's origin remote"
+#USAGE flag "--out <dir>" default="" help="Write readable base/head trees and readable.patch to this directory"
+#USAGE arg "[refs]" var=#true default="" help="Optional ref/range: BASE HEAD, BASE..HEAD, or BASE...HEAD. Omit for working-tree diff against HEAD."
+set -euo pipefail
+
+source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/changes.sh"
+source "$MISE_CONFIG_ROOT/lib/diff.sh"
+require_git
+
+notes_dir="${usage_dir:-notes}"
+pr_number="${usage_pr:-}"
+out_arg="${usage_out:-}"
+abs_notes_dir="$TARGET_DIR/$notes_dir"
+repo_root=$(git -C "$TARGET_DIR" rev-parse --show-toplevel)
+
+ARGS=()
+if [ -n "${usage_refs:-}" ]; then
+  while IFS= read -r arg; do
+    [ -z "$arg" ] && continue
+    ARGS+=("$arg")
+  done < <(printf '%s' "$usage_refs" | xargs printf '%s\n')
+fi
+
+if [ -n "$pr_number" ] && [ ${#ARGS[@]} -gt 0 ]; then
+  echo "Error: pass either --pr or refs, not both" >&2
+  exit 1
+fi
+
+if [ -z "$pr_number" ] && [ ${#ARGS[@]} -eq 0 ]; then
+  manifest="$abs_notes_dir/.manifest"
+  if [ ! -f "$manifest" ]; then
+    echo "No manifest found. Run 'notes obfuscate' first." >&2
+    exit 1
+  fi
+
+  changes=$(detect_changes "$abs_notes_dir") || true
+  if [ -z "$changes" ]; then
+    echo "No changes."
+    exit 0
+  fi
+
+  show_diffs "$abs_notes_dir"
+  exit 0
+fi
+
+base_ref=""
+head_ref=""
+temp_refs=()
+
+cleanup_temp_refs() {
+  local ref
+  for ref in ${temp_refs[@]+"${temp_refs[@]}"}; do
+    git -C "$repo_root" update-ref -d "$ref" 2>/dev/null || true
+  done
+}
+trap cleanup_temp_refs EXIT
+
+if [ -n "$pr_number" ]; then
+  gh_cmd="${GH:-gh}"
+  if ! command -v "$gh_cmd" >/dev/null 2>&1; then
+    echo "Error: gh not found; --pr requires GitHub CLI or GH=/path/to/gh" >&2
+    exit 1
+  fi
+
+  if ! base_branch=$("$gh_cmd" pr view "$pr_number" --json baseRefName --jq .baseRefName); then
+    echo "Error: failed to resolve PR #$pr_number base branch" >&2
+    exit 1
+  fi
+  if [ -z "$base_branch" ]; then
+    echo "Error: PR #$pr_number did not report a base branch" >&2
+    exit 1
+  fi
+
+  safe_pr=$(printf '%s' "$pr_number" | tr -c 'A-Za-z0-9._-' '-')
+  base_ref="refs/notes-diff/pr-$safe_pr-$$-base"
+  head_ref="refs/notes-diff/pr-$safe_pr-$$-head"
+  temp_refs+=("$base_ref" "$head_ref")
+
+  git -C "$repo_root" fetch --quiet origin \
+    "+refs/heads/$base_branch:$base_ref" \
+    "+refs/pull/$pr_number/head:$head_ref"
+  base_ref=$(git -C "$repo_root" merge-base "$base_ref" "$head_ref")
+else
+  case ${#ARGS[@]} in
+    1)
+      range="${ARGS[0]}"
+      case "$range" in
+        *...*)
+          left_ref="${range%%...*}"
+          right_ref="${range#*...}"
+          if [ -z "$left_ref" ] || [ -z "$right_ref" ]; then
+            echo "Error: triple-dot ranges must include both refs" >&2
+            exit 1
+          fi
+          base_ref=$(git -C "$repo_root" merge-base "$left_ref" "$right_ref")
+          head_ref="$right_ref"
+          ;;
+        *..*)
+          base_ref="${range%%..*}"
+          head_ref="${range#*..}"
+          ;;
+        *)
+          base_ref="$range"
+          head_ref="HEAD"
+          ;;
+      esac
+      ;;
+    2)
+      base_ref="${ARGS[0]}"
+      head_ref="${ARGS[1]}"
+      ;;
+    *)
+      echo "Error: expected at most two refs" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+if [ -z "$base_ref" ] || [ -z "$head_ref" ]; then
+  echo "Error: both base and head refs are required" >&2
+  exit 1
+fi
+
+if [ -n "$out_arg" ]; then
+  out_dir="$out_arg"
+  cleanup_out=false
+else
+  out_dir=$(mktemp -d) || exit 1
+  cleanup_out=true
+fi
+
+cleanup_out_dir() {
+  if [ "${cleanup_out:-false}" = "true" ]; then
+    rm -rf "$out_dir"
+  fi
+}
+trap 'cleanup_temp_refs; cleanup_out_dir' EXIT
+
+_prepare_diff_workspace "$out_dir"
+materialize_readable_notes_ref "$repo_root" "$notes_dir" "$base_ref" "$out_dir/base"
+materialize_readable_notes_ref "$repo_root" "$notes_dir" "$head_ref" "$out_dir/head"
+generate_readable_notes_patch "$out_dir/base" "$out_dir/head" "$out_dir/readable.patch"
+
+if [ -s "$out_dir/readable.patch" ]; then
+  cat "$out_dir/readable.patch"
+else
+  echo "No readable note changes." >&2
+fi
+
+if [ -n "$out_arg" ]; then
+  echo "Wrote readable base: $out_dir/base" >&2
+  echo "Wrote readable head: $out_dir/head" >&2
+  echo "Wrote readable patch: $out_dir/readable.patch" >&2
+fi
