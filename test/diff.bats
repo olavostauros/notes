@@ -122,6 +122,25 @@ commit_readable_update() {
   [[ "$output" != *"orphan content"* ]]
 }
 
+@test "notes diff errors when a ref has note files but no manifest" {
+  local repo
+  repo="$BATS_TEST_TMPDIR/no-manifest-repo"
+  export NOTES_CALLER_PWD="$repo"
+  mkdir -p "$repo/notes"
+  git -C "$repo" init -q
+  git -C "$repo" config user.name "Test"
+  git -C "$repo" config user.email "test@test.com"
+  echo "plain content" > "$repo/notes/plain.md"
+  git -C "$repo" add notes/plain.md
+  git -C "$repo" commit -q -m "plain note without manifest"
+
+  run notes diff HEAD HEAD
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"but no notes/.manifest"* ]]
+  [[ "$output" != *"plain.md"* ]]
+  [[ "$output" != *"plain content"* ]]
+}
+
 @test "notes diff rejects refs that are not tree-ish" {
   run notes diff does-not-exist HEAD
   [ "$status" -ne 0 ]

@@ -85,19 +85,21 @@ materialize_readable_notes_ref() {
   done < "$manifest"
 
   local tree_path relpath unmapped_count=0
-  if $has_manifest; then
-    while IFS= read -r -d '' tree_path; do
-      relpath="${tree_path#"$notes_dir/"}"
-      [ "$relpath" = ".manifest" ] && continue
-      if ! grep -Fxq -- "$relpath" "$manifest_ids"; then
-        unmapped_count=$((unmapped_count + 1))
-      fi
-    done < <(git -C "$repo_root" ls-tree -r -z --name-only "$ref" -- "$notes_dir" 2>/dev/null || true)
-  fi
+  while IFS= read -r -d '' tree_path; do
+    relpath="${tree_path#"$notes_dir/"}"
+    [ "$relpath" = ".manifest" ] && continue
+    if ! $has_manifest || ! grep -Fxq -- "$relpath" "$manifest_ids"; then
+      unmapped_count=$((unmapped_count + 1))
+    fi
+  done < <(git -C "$repo_root" ls-tree -r -z --name-only "$ref" -- "$notes_dir" 2>/dev/null || true)
 
   rm -f "$manifest" "$manifest_ids"
   if [ "$unmapped_count" -gt 0 ]; then
-    echo "Error: $ref has $unmapped_count note file(s) not listed in $notes_dir/.manifest" >&2
+    if $has_manifest; then
+      echo "Error: $ref has $unmapped_count note file(s) not listed in $notes_dir/.manifest" >&2
+    else
+      echo "Error: $ref has $unmapped_count note file(s) but no $notes_dir/.manifest" >&2
+    fi
     return 1
   fi
 }
