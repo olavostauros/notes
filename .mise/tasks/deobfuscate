@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #MISE description="Restore obfuscated filenames to their original names"
-#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
-#USAGE flag "--dry-run" help="Show what would be renamed without doing it"
-#USAGE flag "--force" help="Overwrite existing readable files intentionally"
-#USAGE arg "[files]..." help="Specific obfuscated IDs to deobfuscate. Omit for all."
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--dry-run" default=#false help="Show what would be renamed without doing it"
+#USAGE flag "--force" default=#false help="Overwrite existing readable files intentionally"
+#USAGE arg "[files]" var=#true default="" help="Specific obfuscated IDs to deobfuscate. Omit for all."
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -26,6 +26,8 @@ if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
     # Strip notes_dir prefix if provided (e.g. "notes/abc123" → "abc123")
     arg="${arg#"${notes_dir}/"}"
+    # Skip empty variadic defaults after xargs unquotes "''".
+    [ -z "$arg" ] && continue
     arg=$(basename "$arg")
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')

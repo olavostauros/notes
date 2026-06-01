@@ -5,6 +5,27 @@
 # (obfuscated IDs in the index). This library compares readable content against
 # committed content to detect modifications, additions, and deletions.
 
+# Detect manifest entries where both the obfuscated ID and readable path exist
+# on disk with different content. This is the dangerous state left behind when
+# post-merge/post-rebase deobfuscation preserves a dirty readable note while the
+# incoming obfuscated source remains present.
+#
+# Outputs one line per conflict: "<id>\t<readable_name>"
+# Usage: detect_dual_present_conflicts <abs_notes_dir>
+detect_dual_present_conflicts() {
+  local abs_notes_dir="${1:?usage: detect_dual_present_conflicts <abs_notes_dir>}"
+  local manifest="$abs_notes_dir/.manifest"
+  [ ! -f "$manifest" ] && return 0
+
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    [ -f "$abs_notes_dir/$id" ] || continue
+    [ -f "$abs_notes_dir/$relpath" ] || continue
+    cmp -s "$abs_notes_dir/$id" "$abs_notes_dir/$relpath" && continue
+    printf '%s\t%s\n' "$id" "$relpath"
+  done < "$manifest"
+}
+
 # Detect changed notes relative to HEAD.
 # Outputs one line per change: "<status>\t<readable_name>"
 # Status values: modified, new, deleted

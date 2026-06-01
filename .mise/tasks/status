@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Show encryption and obfuscation status"
-#USAGE flag "--json" help="Output as JSON"
-#USAGE flag "--dir <dir>" help="Notes directory name (default: notes)"
+#USAGE flag "--json" default=#false help="Output as JSON"
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory name (default: notes)"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -50,7 +50,16 @@ if [ "$enc_status" != "locked" ] && [ -f "$NOTES_DIR/.manifest" ]; then
   fi
 fi
 
-# --- Output ---
+# --- Incomplete deobfuscation detection ---
+
+incomplete_deobfuscation=""
+incomplete_conflicts=0
+if [ "$enc_status" != "locked" ] && [ -f "$NOTES_DIR/.manifest" ]; then
+  incomplete_deobfuscation=$(detect_dual_present_conflicts "$TARGET_DIR/$NOTES_DIR" 2>/dev/null) || true
+  if [ -n "$incomplete_deobfuscation" ]; then
+    incomplete_conflicts=$(printf '%s\n' "$incomplete_deobfuscation" | wc -l | tr -d ' ')
+  fi
+fi
 
 # --- Changes (only when deobfuscated) ---
 
@@ -83,6 +92,7 @@ if [ "$JSON" = "true" ]; then
       '{
         encryption: { status: $enc, unlocked: $enc_unlocked },
         obfuscation: { status: "unknown", notes: null },
+        incomplete_deobfuscation: { conflicts: 0 },
         changes: null
       }'
   else
@@ -95,9 +105,11 @@ if [ "$JSON" = "true" ]; then
       --argjson chg_new "$changes_new" \
       --argjson chg_deleted "$changes_deleted" \
       --argjson chg_total "$changes_total" \
+      --argjson incomplete_conflicts "$incomplete_conflicts" \
       '{
         encryption: { status: $enc, unlocked: $enc_unlocked },
         obfuscation: { status: $obf, notes: $total_notes },
+        incomplete_deobfuscation: { conflicts: $incomplete_conflicts },
         changes: { total: $chg_total, modified: $chg_modified, new: $chg_new, deleted: $chg_deleted }
       }'
   fi
@@ -113,6 +125,15 @@ else
     echo "Run 'notes unlock' to decrypt files and see obfuscation status."
   else
     echo "Obfuscation: $obf_status ($total_notes notes)"
+    if [ "$incomplete_conflicts" -gt 0 ]; then
+      echo ""
+      echo "Incomplete deobfuscation: $incomplete_conflicts conflict(s)"
+      while IFS=$'\t' read -r conflict_id conflict_relpath; do
+        [ -z "$conflict_id" ] && continue
+        echo "  $conflict_relpath (also present as $NOTES_DIR/$conflict_id)"
+      done <<< "$incomplete_deobfuscation"
+      echo "Run 'notes deobfuscate' after resolving local edits; use 'notes changes <file>' to inspect."
+    fi
     if [ "$obf_status" = "deobfuscated" ]; then
       if [ "$changes_total" -gt 0 ]; then
         echo "Changes:     $changes_total ($changes_modified modified, $changes_new new, $changes_deleted deleted)"

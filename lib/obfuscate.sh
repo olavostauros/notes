@@ -204,6 +204,31 @@ _deobfuscation_base_hash_for_id() {
   awk -F '\t' -v wanted="$id" '$1 == wanted { found=$2 } END { if (found != "") print found }' "$state"
 }
 
+_deobfuscation_readable_matches_base_ref() {
+  local notes_dir="$1" id="$2" relpath="$3" base_ref="$4"
+  [ -n "$base_ref" ] || return 1
+  [ -f "$notes_dir/$relpath" ] || return 1
+
+  resolve_notes_dir "$notes_dir" || return 1
+  local repo_root="$RESOLVED_REPO_ROOT"
+  local notes_rel="$RESOLVED_NOTES_DIR"
+  local tmp
+  tmp=$(mktemp) || return 1
+
+  if ! git -C "$repo_root" cat-file --filters "$base_ref:$notes_rel/$id" > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    return 1
+  fi
+
+  if cmp -s "$tmp" "$notes_dir/$relpath"; then
+    rm -f "$tmp"
+    return 0
+  fi
+
+  rm -f "$tmp"
+  return 1
+}
+
 _record_deobfuscation_base_hashes() {
   local notes_dir="$1"
   shift
@@ -247,7 +272,7 @@ _rename_one_to_readable() {
   [ ! -d "$target_dir" ] && mkdir -p "$target_dir"
 
   if [ -e "$notes_dir/$relpath" ] && ! cmp -s "$notes_dir/$id" "$notes_dir/$relpath"; then
-    local current_hash base_hash state_file
+    local current_hash base_hash state_file dirty_readable=false
     state_file=$(_deobfuscation_state_file "$notes_dir" 2>/dev/null) || state_file=""
     current_hash=$(git -C "$notes_dir" hash-object -- "$notes_dir/$relpath" 2>/dev/null || true)
     base_hash=$(_deobfuscation_base_hash_for_id "$notes_dir" "$id")
@@ -255,9 +280,15 @@ _rename_one_to_readable() {
     # No state file (fresh clone or pre-safety upgrade) -> trust the readable
     # and let the rename proceed. Force-prompting on every file would train
     # users into --force-as-default, which is worse than the one-time window.
-    if [ -n "$state_file" ] && [ -f "$state_file" ] \
-      && { [ -z "$base_hash" ] || [ "$current_hash" != "$base_hash" ]; }; then
-      if [ "${NOTES_DEOBFUSCATE_FORCE:-false}" != "true" ]; then
+    if [ -n "$state_file" ] && [ -f "$state_file" ]; then
+      if [ -n "$base_hash" ]; then
+        [ "$current_hash" != "$base_hash" ] && dirty_readable=true
+      elif ! _deobfuscation_readable_matches_base_ref \
+        "$notes_dir" "$id" "$relpath" "${NOTES_DEOBFUSCATE_BASE_REF:-}"; then
+        dirty_readable=true
+      fi
+
+      if $dirty_readable && [ "${NOTES_DEOBFUSCATE_FORCE:-false}" != "true" ]; then
         echo "Error: refusing to overwrite dirty readable note: $relpath" >&2
         echo "This may be a real local edit, or a cosmetic editor re-save (trailing-newline trim, BOM, line-ending change)." >&2
         echo "Run 'notes changes $relpath' to inspect; rerun with --force to overwrite intentionally." >&2

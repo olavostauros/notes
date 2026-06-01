@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #MISE description="Stage notes for commit (bypasses exclude)"
-#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
-#USAGE flag "--dry-run" help="Show what would be staged without doing it"
-#USAGE arg "[files]..." help="Specific notes to stage (readable names, relative to notes dir). Omit to stage modified/deleted only; new notes require explicit files."
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--dry-run" default=#false help="Show what would be staged without doing it"
+#USAGE arg "[files]" var=#true default="" help="Specific notes to stage (readable names, relative to notes dir). Omit to stage modified/deleted only; new notes require explicit files."
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -23,6 +23,8 @@ ARGS=()
 if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
     arg="${arg#"${notes_dir}/"}"
+    # Skip empty variadic defaults after xargs unquotes "''".
+    [ -z "$arg" ] && continue
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
 fi
@@ -46,6 +48,38 @@ fi
 
 to_stage=()
 skipped_new=()
+
+conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir") || true
+if [ -n "$conflicting_notes" ]; then
+  blocked_conflicts=()
+  while IFS=$'\t' read -r conflict_id conflict_relpath; do
+    [ -z "$conflict_id" ] && continue
+    if $explicit_files; then
+      match=false
+      for f in "${ARGS[@]}"; do
+        [ "$f" = "$conflict_relpath" ] && match=true && break
+      done
+      $match || continue
+    fi
+    blocked_conflicts+=("$conflict_id"$'\t'"$conflict_relpath")
+  done <<< "$conflicting_notes"
+
+  if [ ${#blocked_conflicts[@]} -gt 0 ]; then
+    echo "Error: incomplete deobfuscation detected; refusing to stage conflicting note(s)." >&2
+    echo "A readable note and its obfuscated source both exist with different content:" >&2
+    for conflict in "${blocked_conflicts[@]}"; do
+      IFS=$'\t' read -r conflict_id conflict_relpath <<< "$conflict"
+      echo "  $conflict_relpath (also present as $notes_dir/$conflict_id)" >&2
+    done
+    echo "" >&2
+    echo "Run 'notes deobfuscate' after resolving local edits, or inspect with:" >&2
+    for conflict in "${blocked_conflicts[@]}"; do
+      IFS=$'\t' read -r _conflict_id conflict_relpath <<< "$conflict"
+      echo "  notes changes $conflict_relpath" >&2
+    done
+    exit 1
+  fi
+fi
 
 print_skipped_new() {
   [ ${#skipped_new[@]} -eq 0 ] && return 0

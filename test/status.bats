@@ -49,6 +49,19 @@ load test_helper
   echo "$output" | grep -q "1 notes"
 }
 
+@test "status reports incomplete deobfuscation for dual-present differing pair" {
+  mkdir -p "$TARGET_DIR/notes"
+  printf 'aaaaaaaa\talpha.md\n' > "$TARGET_DIR/notes/.manifest"
+  echo "# Alpha local edit" > "$TARGET_DIR/notes/alpha.md"
+  echo "# Alpha incoming upstream" > "$TARGET_DIR/notes/aaaaaaaa"
+
+  run notes status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Incomplete deobfuscation"* ]]
+  [[ "$output" == *"alpha.md"* ]]
+  [[ "$output" == *"notes/aaaaaaaa"* ]]
+}
+
 # --- JSON output ---
 
 @test "status --json outputs valid JSON" {

@@ -278,6 +278,17 @@ setup() {
   [[ "$output" != *"notes/gamma.md"* ]]
 }
 
+@test "notes stage: no args ignores inherited usage_files" {
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  usage_files="gamma.md" run notes stage
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: alpha.md"* ]]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [[ "$output" == *"notes/alpha.md"* ]]
+}
+
 @test "notes stage: explicit file stages a new note" {
   echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
 
@@ -287,6 +298,24 @@ setup() {
 
   run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
   [[ "$output" == *"notes/gamma.md"* ]]
+}
+
+@test "notes stage: refuses dual-present differing readable and obfuscated pair" {
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+
+  echo "# Alpha local edit" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "# Alpha incoming upstream" > "$NOTES_CALLER_PWD/notes/$alpha_id"
+
+  run notes stage alpha.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"incomplete deobfuscation"* ]]
+  [[ "$output" == *"alpha.md"* ]]
+  [[ "$output" == *"notes deobfuscate"* ]]
+  [[ "$output" == *"notes changes alpha.md"* ]]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [[ "$output" != *"notes/alpha.md"* ]]
 }
 
 @test "notes stage: no args skips readable files left from another branch" {

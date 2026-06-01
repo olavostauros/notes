@@ -7,6 +7,29 @@ export REPO_DIR
 # directly instead of going through `mise run test`.
 eval "$(cd "$REPO_DIR" && mise env)"
 
+# Agent sessions inject command-scope git config so real workspace commits are
+# signed. That command-scope config outranks a throwaway test repo's local
+# `commit.gpgsign=false`, so integration tests can fail when the agent's signing
+# key is unavailable. Tests should exercise git behavior, not the launcher's
+# ambient signing policy; keep commits/tags unsigned while preserving normal
+# global/local user identity resolution.
+_disable_git_signing_for_tests() {
+  local name _value
+  unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
+  while IFS='=' read -r name _value; do
+    case "$name" in
+      GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*) unset "$name" ;;
+    esac
+  done < <(env)
+
+  export GIT_CONFIG_COUNT=2
+  export GIT_CONFIG_KEY_0=commit.gpgsign
+  export GIT_CONFIG_VALUE_0=false
+  export GIT_CONFIG_KEY_1=tag.gpgsign
+  export GIT_CONFIG_VALUE_1=false
+}
+_disable_git_signing_for_tests
+
 # Source lib files at file-load time, not inside setup(). Most .bats files in
 # this suite override setup() to set their own NOTES_CALLER_PWD/fixtures, which
 # shadows the helper's setup() and silently drops the lib sources. Sourcing
