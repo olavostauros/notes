@@ -339,6 +339,48 @@ rename_manifest_entry_in_head() {
   [[ "$output" == *"notes/gamma.md"* ]]
 }
 
+@test "notes stage --dry-run: deleted note leaves manifest and index untouched" {
+  local manifest_before
+  manifest_before=$(cat "$MANIFEST")
+  rm "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes stage --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Would stage:"* ]]
+  [[ "$output" == *"alpha.md"* ]]
+  [ "$(cat "$MANIFEST")" = "$manifest_before" ]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
+@test "notes stage: deleted note stages manifest update in same commit" {
+  source "$REPO_DIR/lib/hooks.sh"
+  install_obfuscation_hook
+  install_deobfuscation_hook
+
+  local alpha_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+  rm "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes stage
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged (delete): alpha.md"* ]]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-status
+  [[ "$output" == *$'D\tnotes/'"$alpha_id"* ]]
+  [[ "$output" == *$'M\tnotes/.manifest'* ]]
+
+  git -C "$NOTES_CALLER_PWD" commit -q -m "delete alpha"
+
+  run git -C "$NOTES_CALLER_PWD" status --porcelain
+  [ -z "$output" ]
+
+  run git -C "$NOTES_CALLER_PWD" cat-file --filters HEAD:notes/.manifest
+  [[ "$output" != *"alpha.md"* ]]
+  [[ "$output" == *"beta.md"* ]]
+}
+
 @test "notes stage: refuses dual-present differing readable and obfuscated pair" {
   local alpha_id
   alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")

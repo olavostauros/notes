@@ -173,7 +173,11 @@ for relpath in "${to_stage[@]}"; do
     # Deleted: remove the obfuscated ID from the index
     id=$(manifest_id_for_name "$manifest" "$relpath")
     if [ -n "$id" ]; then
+      tmp_manifest=$(mktemp) || exit 1
+      awk -F '\t' -v path="$relpath" '$2 != path { print $0 }' "$manifest" > "$tmp_manifest"
+      mv -f "$tmp_manifest" "$manifest"
       git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$id" 2>/dev/null || true
+      git -C "$TARGET_DIR" add -f "$notes_dir/.manifest"
       echo "  staged (delete): $relpath"
     fi
   fi
