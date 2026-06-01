@@ -90,6 +90,44 @@ commit_readable_update() {
   [[ "$output" == *"Wrote readable patch: $out_dir/readable.patch"* ]]
 }
 
+@test "notes diff --out refuses symlink destinations" {
+  local out_target out_link
+  out_target="$BATS_TEST_TMPDIR/out-target"
+  out_link="$BATS_TEST_TMPDIR/out-link"
+  mkdir -p "$out_target"
+  echo "keep" > "$out_target/existing.txt"
+  ln -s "$out_target" "$out_link"
+
+  rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  commit_readable_update "edit alpha"
+
+  run notes diff --out "$out_link" HEAD~1 HEAD
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Error: --out path must not be a symlink"* ]]
+  [ ! -e "$out_target/readable.patch" ]
+  [ ! -e "$out_target/base" ]
+  [ ! -e "$out_target/head" ]
+}
+
+@test "notes diff errors when a ref has manifest-unmapped note files" {
+  echo "orphan content" > "$NOTES_CALLER_PWD/notes/deadbeef"
+  git -C "$NOTES_CALLER_PWD" add notes/deadbeef
+  git -C "$NOTES_CALLER_PWD" commit -q -m "add unmapped note blob"
+
+  run notes diff HEAD~1 HEAD
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not listed in notes/.manifest"* ]]
+  [[ "$output" != *"deadbeef"* ]]
+  [[ "$output" != *"orphan content"* ]]
+}
+
+@test "notes diff rejects refs that are not tree-ish" {
+  run notes diff does-not-exist HEAD
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Error: not a tree-ish ref: does-not-exist"* ]]
+}
+
 @test "notes diff without refs shows working-tree readable diff" {
   rename_to_readable "$NOTES_CALLER_PWD/notes" > /dev/null
   echo "# Alpha local" > "$NOTES_CALLER_PWD/notes/alpha.md"

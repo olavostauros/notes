@@ -48,16 +48,29 @@ materialize_readable_notes_ref() {
   local manifest
   manifest=$(mktemp) || return 1
 
+  if ! git -C "$repo_root" cat-file -e "$ref^{tree}" 2>/dev/null; then
+    echo "Error: not a tree-ish ref: $ref" >&2
+    rm -f "$manifest"
+    return 1
+  fi
+
   mkdir -p "$dest/$notes_dir"
+  local has_manifest=false
+  if _ref_has_path "$repo_root" "$ref" "$notes_dir/.manifest"; then
+    has_manifest=true
+  fi
   if ! _materialize_manifest_for_ref "$repo_root" "$notes_dir" "$ref" "$manifest"; then
     rm -f "$manifest"
     return 1
   fi
 
+  local manifest_ids
+  manifest_ids=$(mktemp) || { rm -f "$manifest"; return 1; }
   while IFS=$'\t' read -r id relpath; do
     [ -z "$id" ] && continue
-    _guard_manifest_path "id" "$id" || { rm -f "$manifest"; return 1; }
-    _guard_manifest_path "path" "$relpath" || { rm -f "$manifest"; return 1; }
+    _guard_manifest_path "id" "$id" || { rm -f "$manifest" "$manifest_ids"; return 1; }
+    _guard_manifest_path "path" "$relpath" || { rm -f "$manifest" "$manifest_ids"; return 1; }
+    printf '%s\n' "$id" >> "$manifest_ids"
 
     if ! _ref_has_path "$repo_root" "$ref" "$notes_dir/$id"; then
       echo "Warning: $ref manifest maps $id to $relpath, but $notes_dir/$id is missing" >&2
@@ -66,12 +79,27 @@ materialize_readable_notes_ref() {
 
     mkdir -p "$(dirname "$dest/$notes_dir/$relpath")"
     if ! git -C "$repo_root" cat-file --filters "$ref:$notes_dir/$id" > "$dest/$notes_dir/$relpath"; then
-      rm -f "$manifest"
+      rm -f "$manifest" "$manifest_ids"
       return 1
     fi
   done < "$manifest"
 
-  rm -f "$manifest"
+  local tree_path relpath unmapped_count=0
+  if $has_manifest; then
+    while IFS= read -r -d '' tree_path; do
+      relpath="${tree_path#"$notes_dir/"}"
+      [ "$relpath" = ".manifest" ] && continue
+      if ! grep -Fxq -- "$relpath" "$manifest_ids"; then
+        unmapped_count=$((unmapped_count + 1))
+      fi
+    done < <(git -C "$repo_root" ls-tree -r -z --name-only "$ref" -- "$notes_dir" 2>/dev/null || true)
+  fi
+
+  rm -f "$manifest" "$manifest_ids"
+  if [ "$unmapped_count" -gt 0 ]; then
+    echo "Error: $ref has $unmapped_count note file(s) not listed in $notes_dir/.manifest" >&2
+    return 1
+  fi
 }
 
 _copy_tree_contents() {
@@ -112,6 +140,14 @@ generate_readable_notes_patch() {
 
 _prepare_diff_workspace() {
   local out_dir="$1"
+  if [ -L "$out_dir" ]; then
+    echo "Error: --out path must not be a symlink: $out_dir" >&2
+    return 1
+  fi
+  if [ -e "$out_dir" ] && [ ! -d "$out_dir" ]; then
+    echo "Error: --out path exists and is not a directory: $out_dir" >&2
+    return 1
+  fi
   if [ -e "$out_dir" ] && [ -n "$(find "$out_dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
     echo "Error: --out directory already exists and is not empty: $out_dir" >&2
     return 1
