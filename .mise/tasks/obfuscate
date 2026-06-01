@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #MISE description="Obfuscate note filenames (reversible via deobfuscate)"
-#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
-#USAGE flag "--dry-run" help="Show what would be renamed without doing it"
-#USAGE arg "[files]..." help="Specific files to obfuscate (relative to notes dir). Omit for all."
-set -eo pipefail
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+#USAGE flag "--dry-run" default=#false help="Show what would be renamed without doing it"
+#USAGE arg "[files]" var=#true default="" help="Specific files to obfuscate (relative to notes dir). Omit for all."
+set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
@@ -25,6 +25,7 @@ if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
     # Strip notes_dir prefix if provided (e.g. "notes/alpha.md" → "alpha.md")
     arg="${arg#"${notes_dir}/"}"
+    [ -z "$arg" ] && continue
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
 fi
@@ -33,7 +34,7 @@ if [ "${usage_dry_run:-}" = "true" ]; then
   # Dry-run: show what would be renamed without doing it.
   # Use the same classification logic as rename_to_obfuscated.
   if [ ${#ARGS[@]} -gt 0 ]; then
-    for relpath in "${ARGS[@]}"; do
+    for relpath in ${ARGS[@]+"${ARGS[@]}"}; do
       [[ "$relpath" == ".manifest" ]] && continue
       [ ! -f "$abs_notes_dir/$relpath" ] && continue
       base=$(basename "$relpath")
@@ -67,11 +68,11 @@ fi
 # In scoped mode, we need to find the IDs for files being re-obfuscated.
 if [ ${#ARGS[@]} -gt 0 ]; then
   scoped_ids=()
-  for relpath in "${ARGS[@]}"; do
+  for relpath in ${ARGS[@]+"${ARGS[@]}"}; do
     id=$(manifest_id_for_name "$manifest" "$relpath" || true)
     [ -n "$id" ] && scoped_ids+=("$id")
   done
-  [ ${#scoped_ids[@]} -gt 0 ] && clear_status_suppression "$abs_notes_dir" "${scoped_ids[@]}"
+  [ ${#scoped_ids[@]} -gt 0 ] && clear_status_suppression "$abs_notes_dir" ${scoped_ids[@]+"${scoped_ids[@]}"}
 else
   clear_status_suppression "$abs_notes_dir"
 fi
@@ -79,7 +80,7 @@ fi
 # Perform the rename via Layer 1
 # Exit codes: 0=success, 2=nothing to do, 1=error
 # Use && rc=0 || rc=$? to capture exit code without triggering errexit.
-output=$(rename_to_obfuscated "$abs_notes_dir" "${ARGS[@]}") && rc=0 || rc=$?
+output=$(rename_to_obfuscated "$abs_notes_dir" ${ARGS[@]+"${ARGS[@]}"}) && rc=0 || rc=$?
 if [ $rc -eq 2 ]; then
   echo "Nothing to obfuscate."
   exit 0

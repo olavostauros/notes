@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Install git hooks for obfuscation (pre-commit, post-commit, post-merge)"
-#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
-set -eo pipefail
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 source "$MISE_CONFIG_ROOT/lib/hooks.sh"

@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+#MISE description="Search notes by title, frontmatter, and body"
+#USAGE arg "<query>" help="Case-insensitive text to search for" required=#true
+#USAGE flag "--json" help="Output as JSON array" default=#false
+#USAGE flag "--tag <tag>" help="Filter by tag" default=""
+#USAGE flag "--type <type>" help="Filter by frontmatter type" default=""
+#USAGE flag "--status <status>" help="Filter by frontmatter status" default=""
+#USAGE flag "--limit <n>" help="Maximum results to show" default="50"
+#USAGE flag "--dir <dir>" help="Notes directory relative to repo root" default="notes"
+set -euo pipefail
+
+REPO_DIR="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"
+TARGET_DIR="${NOTES_CALLER_PWD:-.}"
+notes_dir="$TARGET_DIR/${usage_dir:-notes}"
+
+if [ ! -d "$notes_dir" ]; then
+  echo "Error: notes directory not found: $notes_dir" >&2
+  exit 1
+fi
+
+python3 - "$REPO_DIR" "$notes_dir" "${usage_query:-}" "${usage_json:-false}" "${usage_tag:-}" "${usage_type:-}" "${usage_status:-}" "${usage_limit:-50}" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+repo_dir = Path(sys.argv[1])
+notes_dir = Path(sys.argv[2])
+query = sys.argv[3]
+json_output = sys.argv[4] == "true"
+tag_filter = sys.argv[5]
+type_filter = sys.argv[6]
+status_filter = sys.argv[7]
+limit = sys.argv[8]
+
+sys.path.insert(0, str(repo_dir / "lib"))
+from frontmatter import filter_notes, iter_notes  # noqa: E402
+
+try:
+    limit_count = int(limit)
+except ValueError:
+    print(f"Error: --limit must be an integer: {limit}", file=sys.stderr)
+    sys.exit(1)
+if limit_count < 1:
+    print("Error: --limit must be greater than zero", file=sys.stderr)
+    sys.exit(1)
+
+needle = query.lower()
+rows = []
+for note in filter_notes(
+    iter_notes(notes_dir),
+    tag=tag_filter,
+    note_type=type_filter,
+    status=status_filter,
+):
+    if needle not in note.searchable_blob().lower():
+        continue
+
+    matches = []
+    if needle in note.title.lower():
+        matches.append(f"title: {note.title}")
+    if needle in note.slug.lower():
+        matches.append(f"slug: {note.slug}")
+    for key, value in note.metadata.items():
+        text = json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else str(value)
+        if needle in text.lower() and key not in {"title"}:
+            matches.append(f"{key}: {text}")
+    for line_number, line in enumerate(note.body.splitlines(), start=1):
+        if needle in line.lower():
+            snippet = line.strip()
+            if len(snippet) > 120:
+                snippet = snippet[:117] + "..."
+            matches.append(f"body:{line_number}: {snippet}")
+        if len(matches) >= 5:
+            break
+
+    row = note.row()
+    row["matches"] = matches[:5]
+    rows.append(row)
+
+rows.sort(key=lambda row: row["date"], reverse=True)
+rows = rows[:limit_count]
+
+if json_output:
+    print(json.dumps(rows, indent=2, ensure_ascii=False))
+elif not rows:
+    filters = []
+    if tag_filter:
+        filters.append(f"tag={tag_filter}")
+    if type_filter:
+        filters.append(f"type={type_filter}")
+    if status_filter:
+        filters.append(f"status={status_filter}")
+    suffix = f" with {' '.join(filters)}" if filters else ""
+    print(f"No notes found matching: {query}{suffix}")
+else:
+    table = "Title\tType\tStatus\tUpdated\tMatches\n" + "\n".join(
+        f"{row['title']}\t{row['type']}\t{row['status']}\t{row['date']}\t{' | '.join(row['matches'][:2])}" for row in rows
+    )
+    subprocess.run(
+        ["gum", "table", "--print", "--separator", "\t"],
+        input=table,
+        text=True,
+        check=True,
+    )
+PY

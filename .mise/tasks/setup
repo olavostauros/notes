@@ -5,7 +5,7 @@
 #USAGE flag "--pattern <pattern>" var=#true default="" help="Gitattributes patterns to encrypt (default: <dir>/**)"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
 #USAGE flag "--unlock" default=#false help="Unlock after setup (for joining an existing repo)"
-set -eo pipefail
+set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 source "$MISE_CONFIG_ROOT/lib/hooks.sh"

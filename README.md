@@ -15,8 +15,10 @@ notes setup --yes
 # Add a note with YAML frontmatter.
 notes new --slug project-plan --title "Project plan" --tags planning
 
-# See note metadata.
+# See note metadata, search notes, and show one note.
 notes list
+notes search "workflow"
+notes show project-plan
 
 # Check encryption + obfuscation state.
 notes status
@@ -38,6 +40,11 @@ notes status
 # Show note changes against HEAD.
 notes changes
 notes changes --summary
+
+# Query notes by metadata or content.
+notes list --type skill
+notes search "review capacity" --tag workflow
+notes show project-plan --json
 
 # Show readable diffs for local changes, refs, or PRs.
 notes diff
