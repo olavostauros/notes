@@ -370,6 +370,39 @@ rename_manifest_entry_in_head() {
   [ -z "$output" ]
 }
 
+@test "notes stage: deleted note rolls back manifest when manifest staging fails" {
+  local alpha_id manifest_before real_git
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+  manifest_before=$(cat "$MANIFEST")
+  real_git=$(command -v git)
+  rm "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat > "$BATS_TEST_TMPDIR/bin/git" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "-C" ] && [ "\$3" = "add" ] && [ "\$4" = "-f" ] && [ "\$5" = "notes/.manifest" ]; then
+  echo "simulated manifest add failure" >&2
+  exit 99
+fi
+exec "$real_git" "\$@"
+SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/git"
+
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" run notes stage
+  [ "$status" -ne 0 ]
+  [ "$(cat "$MANIFEST")" = "$manifest_before" ]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-status
+  [[ "$output" == *$'D\tnotes/'"$alpha_id"* ]]
+  [[ "$output" != *$'M\tnotes/.manifest'* ]]
+
+  run notes stage
+  [ "$status" -eq 0 ]
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-status
+  [[ "$output" == *$'D\tnotes/'"$alpha_id"* ]]
+  [[ "$output" == *$'M\tnotes/.manifest'* ]]
+}
+
 @test "notes stage: deleted note stages manifest update in same commit" {
   source "$REPO_DIR/lib/hooks.sh"
   install_obfuscation_hook
