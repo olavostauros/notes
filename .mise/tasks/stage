@@ -173,10 +173,18 @@ for relpath in "${to_stage[@]}"; do
     # Deleted: remove the obfuscated ID from the index
     id=$(manifest_id_for_name "$manifest" "$relpath")
     if [ -n "$id" ]; then
+      # First remove the tracked blob when it is still present in the index.
+      # If the index cannot be updated (for example, an index lock exists),
+      # fail before mutating the working manifest. If a previous interrupted
+      # run already staged/removed the blob, keep going and only stage the
+      # manifest repair.
+      if git -C "$TARGET_DIR" ls-files --error-unmatch -- "$notes_dir/$id" >/dev/null 2>&1; then
+        git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$id"
+      fi
+
       tmp_manifest=$(mktemp) || exit 1
       awk -F '\t' -v path="$relpath" '$2 != path { print $0 }' "$manifest" > "$tmp_manifest"
       mv -f "$tmp_manifest" "$manifest"
-      git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$id" 2>/dev/null || true
       git -C "$TARGET_DIR" add -f "$notes_dir/.manifest"
       echo "  staged (delete): $relpath"
     fi

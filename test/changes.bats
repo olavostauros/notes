@@ -354,6 +354,22 @@ rename_manifest_entry_in_head() {
   [ -z "$output" ]
 }
 
+@test "notes stage: deleted note does not mutate manifest when index removal fails" {
+  local manifest_before
+  manifest_before=$(cat "$MANIFEST")
+  rm "$NOTES_CALLER_PWD/notes/alpha.md"
+  touch "$NOTES_CALLER_PWD/.git/index.lock"
+
+  run notes stage
+  rm -f "$NOTES_CALLER_PWD/.git/index.lock"
+
+  [ "$status" -ne 0 ]
+  [ "$(cat "$MANIFEST")" = "$manifest_before" ]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
 @test "notes stage: deleted note stages manifest update in same commit" {
   source "$REPO_DIR/lib/hooks.sh"
   install_obfuscation_hook
