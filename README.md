@@ -44,6 +44,10 @@ notes diff
 notes diff main...HEAD
 notes diff --pr 109 --out /tmp/notes-109-review
 
+# Inspect unresolved encrypted-note merge conflicts without resolving them.
+notes conflicts --out /tmp/notes-conflicts
+notes merge --dry-run --out /tmp/notes-conflicts
+
 # Stage modified/deleted notes. New notes should be explicit.
 notes stage
 notes stage notes/new-note.md
@@ -65,6 +69,7 @@ notes unlock
 - **Manifest merging** — uses a custom merge driver for `notes/.manifest` so concurrent note additions can merge cleanly.
 - **Safe staging** — stages notes despite local exclude/assume-unchanged rules used for readable working copies.
 - **Readable review diffs** — materializes obfuscated note refs/PRs as readable Markdown and emits a normal patch.
+- **Readable conflict artifacts** — detects unmerged encrypted/obfuscated note content and writes base/ours/theirs Markdown files for manual resolution.
 
 ## Important gotchas
 
