@@ -23,6 +23,8 @@ ARGS=()
 if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
     arg="${arg#"${notes_dir}/"}"
+    # Skip empty variadic defaults after xargs unquotes "''".
+    [ -z "$arg" ] && continue
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
 fi

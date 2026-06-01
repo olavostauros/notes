@@ -26,6 +26,8 @@ if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
     # Strip notes_dir prefix if provided (e.g. "notes/abc123" → "abc123")
     arg="${arg#"${notes_dir}/"}"
+    # Skip empty variadic defaults after xargs unquotes "''".
+    [ -z "$arg" ] && continue
     arg=$(basename "$arg")
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
