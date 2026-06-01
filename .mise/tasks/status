@@ -166,10 +166,12 @@ else
     echo "Unmerged note content conflicts: $unmerged_content_conflict_count"
     while IFS=$'\t' read -r conflict_id conflict_readable conflict_git_path; do
       [ -z "$conflict_id" ] && continue
-      if [ -n "$conflict_readable" ]; then
+      if [ "$conflict_readable" = "__NOTES_UNMAPPED__" ]; then
+        echo "  $conflict_git_path (readable name unavailable)"
+      elif [ -n "$conflict_readable" ]; then
         echo "  $conflict_readable ($conflict_git_path)"
       else
-        echo "  $conflict_git_path (unmapped; manifest unavailable)"
+        echo "  $conflict_git_path (readable name unavailable)"
       fi
     done <<< "$unmerged_content_conflicts"
     echo "Run 'notes conflicts --out <dir>' to write readable base/ours/theirs artifacts."

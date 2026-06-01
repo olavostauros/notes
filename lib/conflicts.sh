@@ -146,7 +146,7 @@ notes_conflict_records() {
 
     if ! _notes_conflict_guard_id "$id"; then
       if [ "$mode" = "allow-unmapped" ]; then
-        printf '%s\t\t%s\n' "$id" "$git_path"
+        printf '%s\t__NOTES_UNMAPPED__\t%s\n' "$id" "$git_path"
         continue
       fi
       echo "Error: unsupported unmerged note path: $git_path" >&2
@@ -158,8 +158,8 @@ notes_conflict_records() {
       :
     else
       lookup_rc=$?
-      if [ "$mode" = "allow-unmapped" ] && [ "$lookup_rc" -eq 2 ]; then
-        readable=""
+      if [ "$mode" = "allow-unmapped" ]; then
+        readable="__NOTES_UNMAPPED__"
       else
         if [ "$lookup_rc" -eq 2 ]; then
           echo "Error: missing manifest mapping for $git_path" >&2
