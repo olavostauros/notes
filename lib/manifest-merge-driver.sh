@@ -22,7 +22,7 @@
 # happen because rename = delete old + create new with new ID under the
 # current obfuscate logic. If rename-in-place is ever added, this driver
 # should detect the "two names → one ID" case.
-set -eo pipefail
+set -euo pipefail
 
 ANCESTOR="$1"  # %O — common ancestor
 OURS="$2"      # %A — current branch (merge result goes here)
@@ -38,7 +38,7 @@ trap 'rm -rf "$WORK"' EXIT
 #
 # If the file is encrypted, decrypt it through git-crypt's smudge filter. If
 # smudge fails (repo locked, git-crypt not installed), this is a hard error
-# — we exit non-zero with a diagnostic. The calling `set -eo pipefail` will
+# — we exit non-zero with a diagnostic. The calling `set -euo pipefail` will
 # abort the driver, which leaves `ours` unchanged. That's the right
 # behavior: git then surfaces a merge conflict on the manifest, and the
 # user is forced to investigate rather than silently accepting a corrupted

@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+#MISE description="Show a note by slug, title, or path"
+#USAGE arg "<note>" help="Note slug, title, or path" required=#true
+#USAGE flag "--json" help="Output metadata and body as JSON" default=#false
+#USAGE flag "--dir <dir>" help="Notes directory relative to repo root" default="notes"
+set -euo pipefail
+
+REPO_DIR="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"
+TARGET_DIR="${NOTES_CALLER_PWD:-.}"
+notes_dir="$TARGET_DIR/${usage_dir:-notes}"
+
+if [ ! -d "$notes_dir" ]; then
+  echo "Error: notes directory not found: $notes_dir" >&2
+  exit 1
+fi
+
+python3 - "$REPO_DIR" "$TARGET_DIR" "$notes_dir" "${usage_note:-}" "${usage_json:-false}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+repo_dir = Path(sys.argv[1])
+target_dir = Path(sys.argv[2])
+notes_dir = Path(sys.argv[3])
+selector = sys.argv[4]
+json_output = sys.argv[5] == "true"
+
+sys.path.insert(0, str(repo_dir / "lib"))
+from frontmatter import Note, iter_notes, read_frontmatter  # noqa: E402
+
+
+def existing_path_candidates(selector: str) -> list[Path]:
+    raw = Path(selector).expanduser()
+    candidates: list[Path] = []
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        candidates.extend([target_dir / raw, notes_dir / raw])
+        if raw.suffix != ".md":
+            candidates.extend([target_dir / f"{selector}.md", notes_dir / f"{selector}.md"])
+    seen = set()
+    unique: list[Path] = []
+    for candidate in candidates:
+        resolved = candidate.resolve() if candidate.exists() else candidate
+        key = str(resolved)
+        if key not in seen:
+            unique.append(candidate)
+            seen.add(key)
+    return unique
+
+
+def note_from_path(path: Path) -> Note | None:
+    metadata, body = read_frontmatter(path)
+    if metadata is None or body is None:
+        return None
+    note = Note(path=path, metadata=metadata, body=body)
+    return note if note.title else None
+
+for candidate in existing_path_candidates(selector):
+    if candidate.is_file():
+        if json_output:
+            note = note_from_path(candidate)
+            if note is None:
+                print(json.dumps({"path": str(candidate), "metadata": {}, "body": candidate.read_text(encoding="utf-8")}, indent=2, ensure_ascii=False))
+            else:
+                print(json.dumps(note.json(include_body=True), indent=2, ensure_ascii=False))
+        else:
+            print(candidate.read_text(encoding="utf-8"), end="")
+        sys.exit(0)
+
+notes = iter_notes(notes_dir)
+exact_slug = [note for note in notes if note.slug == selector]
+if exact_slug:
+    matches = exact_slug
+else:
+    selector_lower = selector.lower()
+    matches = [note for note in notes if note.title.lower() == selector_lower]
+
+if not matches:
+    print(f"Error: note not found: {selector}", file=sys.stderr)
+    sys.exit(1)
+if len(matches) > 1:
+    print(f"Error: note selector is ambiguous: {selector}", file=sys.stderr)
+    for note in matches:
+        print(f"  {note.slug}\t{note.title}\t{note.path}", file=sys.stderr)
+    sys.exit(1)
+
+note = matches[0]
+if json_output:
+    print(json.dumps(note.json(include_body=True), indent=2, ensure_ascii=False))
+else:
+    print(note.path.read_text(encoding="utf-8"), end="")
+PY

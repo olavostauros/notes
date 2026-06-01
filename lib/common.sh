@@ -8,9 +8,9 @@
 #   - hooks.sh     — git hook installation
 
 # Prefer the notes-specific caller dir to avoid inheriting stale generic
-# caller context from another shiv-managed tool. CALLER_PWD remains a
-# temporary migration fallback for older shims/callers.
-TARGET_DIR="${NOTES_CALLER_PWD:-${CALLER_PWD:-.}}"
+# caller context from another shiv-managed tool. Direct repo-local task runs
+# fall back to the current working directory.
+TARGET_DIR="${NOTES_CALLER_PWD:-.}"
 
 NOTES_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTES_REPO_DIR="$(cd "$NOTES_LIB_DIR/.." && pwd)"

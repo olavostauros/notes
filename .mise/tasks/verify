@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #MISE description="Verify that a public key produces a given fingerprint"
 #USAGE flag "--gpg-key <fingerprint>" help="Expected GPG fingerprint" required=#true
-#USAGE flag "--key-file <file>" help="Path to armored public key file (or - for stdin)"
-set -eo pipefail
+#USAGE flag "--key-file <file>" default="" help="Path to armored public key file (or - for stdin)"
+set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 require_rudi

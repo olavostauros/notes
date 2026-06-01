@@ -3,7 +3,7 @@
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
 #USAGE flag "--dry-run" default=#false help="Show what would be staged without doing it"
 #USAGE arg "[files]" var=#true default="" help="Specific notes to stage (readable names, relative to notes dir). Omit to stage modified/deleted only; new notes require explicit files."
-set -eo pipefail
+set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
@@ -56,7 +56,7 @@ while IFS=$'\t' read -r status relpath; do
   [ "$status" = "stale-readable" ] || continue
   if $explicit_files; then
     match=false
-    for f in "${ARGS[@]}"; do
+    for f in ${ARGS[@]+"${ARGS[@]}"}; do
       [ "$f" = "$relpath" ] && match=true && break
     done
     $match || continue
@@ -81,7 +81,7 @@ if [ -n "$conflicting_notes" ]; then
     [ -z "$conflict_id" ] && continue
     if $explicit_files; then
       match=false
-      for f in "${ARGS[@]}"; do
+      for f in ${ARGS[@]+"${ARGS[@]}"}; do
         [ "$f" = "$conflict_relpath" ] && match=true && break
       done
       $match || continue
@@ -110,7 +110,7 @@ print_skipped_new() {
   [ ${#skipped_new[@]} -eq 0 ] && return 0
 
   echo "Skipped ${#skipped_new[@]} new note(s). Stage explicitly with: notes stage <file>"
-  for relpath in "${skipped_new[@]}"; do
+  for relpath in ${skipped_new[@]+"${skipped_new[@]}"}; do
     echo "  new: $relpath"
   done
 }
@@ -118,7 +118,7 @@ print_skipped_new() {
 while IFS=$'\t' read -r status relpath; do
   if $explicit_files; then
     match=false
-    for f in "${ARGS[@]}"; do
+    for f in ${ARGS[@]+"${ARGS[@]}"}; do
       [ "$f" = "$relpath" ] && match=true && break
     done
     $match || continue
@@ -153,7 +153,7 @@ fi
 
 if [ "${usage_dry_run:-}" = "true" ]; then
   echo "Would stage:"
-  for relpath in "${to_stage[@]}"; do
+  for relpath in ${to_stage[@]+"${to_stage[@]}"}; do
     echo "  $relpath"
   done
   print_skipped_new
@@ -162,7 +162,7 @@ fi
 
 # Stage each file using git add -f to bypass .git/info/exclude
 staged=0
-for relpath in "${to_stage[@]}"; do
+for relpath in ${to_stage[@]+"${to_stage[@]}"}; do
   local_file="$abs_notes_dir/$relpath"
 
   if [ -f "$local_file" ]; then

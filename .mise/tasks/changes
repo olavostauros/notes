@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #MISE description="Show changed notes (diffs against last commit)"
-#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
-#USAGE flag "--summary" help="Show only the change summary (modified/new/deleted), no diffs"
-#USAGE arg "[files]..." help="Specific notes to check (readable names, relative to notes dir). Omit for all."
-set -eo pipefail
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+#USAGE flag "--summary" default=#false help="Show only the change summary (modified/new/deleted), no diffs"
+#USAGE arg "[files]" var=#true default="" help="Specific notes to check (readable names, relative to notes dir). Omit for all."
+set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
@@ -25,6 +25,7 @@ ARGS=()
 if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
     arg="${arg#"${notes_dir}/"}"
+    [ -z "$arg" ] && continue
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
 fi
@@ -43,7 +44,7 @@ if [ "${usage_summary:-}" = "true" ]; then
   while IFS=$'\t' read -r status relpath; do
     if [ ${#ARGS[@]} -gt 0 ] && [ -n "${ARGS[0]}" ]; then
       match=false
-      for f in "${ARGS[@]}"; do
+      for f in ${ARGS[@]+"${ARGS[@]}"}; do
         [ "$f" = "$relpath" ] && match=true && break
       done
       $match || continue
@@ -73,5 +74,5 @@ else
     exit 0
   fi
 
-  show_diffs "$abs_notes_dir" "${ARGS[@]}"
+  show_diffs "$abs_notes_dir" ${ARGS[@]+"${ARGS[@]}"}
 fi
