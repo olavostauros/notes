@@ -227,6 +227,51 @@ create_conflicted_gitcrypt_header_repo() {
   [[ "$output" == *"notes conflicts --out"* ]]
 }
 
+@test "notes status still reports conflicts with unsafe manifest mappings" {
+  printf 'aaaaaaaa\t../alpha.md\n' > "$NOTES_CALLER_PWD/notes/.manifest"
+  printf '# Alpha\nbase\n' > "$NOTES_CALLER_PWD/notes/aaaaaaaa"
+  commit_all "base unsafe path"
+  git -C "$NOTES_CALLER_PWD" branch -M main
+
+  git -C "$NOTES_CALLER_PWD" checkout -q -b feature
+  printf '# Alpha\nfeature\n' > "$NOTES_CALLER_PWD/notes/aaaaaaaa"
+  commit_all "feature unsafe path"
+
+  git -C "$NOTES_CALLER_PWD" checkout -q main
+  printf '# Alpha\nmain\n' > "$NOTES_CALLER_PWD/notes/aaaaaaaa"
+  commit_all "main unsafe path"
+  run git -C "$NOTES_CALLER_PWD" merge feature
+  [ "$status" -ne 0 ]
+
+  run notes status
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Unmerged note content conflicts: 1"* ]]
+  [[ "$output" == *"notes/aaaaaaaa (readable name unavailable)"* ]]
+}
+
+@test "notes status still reports conflicts with ambiguous manifest mappings" {
+  printf 'aaaaaaaa\talpha.md\naaaaaaaa\tbeta.md\n' > "$NOTES_CALLER_PWD/notes/.manifest"
+  printf '# Alpha\nbase\n' > "$NOTES_CALLER_PWD/notes/aaaaaaaa"
+  commit_all "base ambiguous path"
+  git -C "$NOTES_CALLER_PWD" branch -M main
+
+  git -C "$NOTES_CALLER_PWD" checkout -q -b feature
+  printf '# Alpha\nfeature\n' > "$NOTES_CALLER_PWD/notes/aaaaaaaa"
+  commit_all "feature ambiguous path"
+
+  git -C "$NOTES_CALLER_PWD" checkout -q main
+  printf '# Alpha\nmain\n' > "$NOTES_CALLER_PWD/notes/aaaaaaaa"
+  commit_all "main ambiguous path"
+  run git -C "$NOTES_CALLER_PWD" merge feature
+  [ "$status" -ne 0 ]
+
+  run notes status --json
+
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.unmerged_content_conflicts.conflicts == 1'
+}
+
 @test "notes status --json counts unmerged note content conflicts" {
   create_conflicted_note_repo
 
