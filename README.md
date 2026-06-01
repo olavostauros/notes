@@ -39,6 +39,11 @@ notes status
 notes changes
 notes changes --summary
 
+# Show readable diffs for local changes, refs, or PRs.
+notes diff
+notes diff main...HEAD
+notes diff --pr 109 --out /tmp/notes-109-review
+
 # Stage modified/deleted notes. New notes should be explicit.
 notes stage
 notes stage notes/new-note.md
@@ -59,6 +64,7 @@ notes unlock
 - **Filename obfuscation** — stores notes with opaque filenames in Git while restoring readable names locally.
 - **Manifest merging** — uses a custom merge driver for `notes/.manifest` so concurrent note additions can merge cleanly.
 - **Safe staging** — stages notes despite local exclude/assume-unchanged rules used for readable working copies.
+- **Readable review diffs** — materializes obfuscated note refs/PRs as readable Markdown and emits a normal patch.
 
 ## Important gotchas
 
