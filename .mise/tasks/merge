@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="Preview note merge-conflict resolution artifacts"
+#USAGE flag "--dry-run" default=#false help="Preview conflict artifacts without resolving or staging"
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--out <dir>" default="" help="Output directory for readable conflict artifacts"
+set -euo pipefail
+
+source "$MISE_CONFIG_ROOT/lib/common.sh"
+require_git
+
+if [ "${usage_dry_run:-false}" != "true" ]; then
+  echo "Error: notes merge currently only supports --dry-run." >&2
+  echo "Run: notes merge --dry-run --out <dir>" >&2
+  exit 1
+fi
+
+args=(conflicts --dir "${usage_dir:-notes}")
+if [ -n "${usage_out:-}" ]; then
+  args+=(--out "${usage_out}")
+fi
+
+cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q "${args[@]}"

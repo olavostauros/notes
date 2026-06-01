@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#MISE description="Write readable artifacts for unresolved note content conflicts"
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--out <dir>" default="" help="Output directory for readable conflict artifacts"
+set -euo pipefail
+
+source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/conflicts.sh"
+require_git
+
+notes_dir="${usage_dir:-notes}"
+out_arg="${usage_out:-}"
+repo_root=$(git -C "$TARGET_DIR" rev-parse --show-toplevel)
+
+if ! records=$(notes_conflict_records "$repo_root" "$notes_dir"); then
+  exit 1
+fi
+
+if [ -z "$records" ]; then
+  echo "No note content conflicts."
+  exit 0
+fi
+
+record_count=$(printf '%s\n' "$records" | grep -c . || true)
+
+if [ -n "$out_arg" ]; then
+  out_dir="$out_arg"
+else
+  out_dir=$(mktemp -d "${TMPDIR:-/tmp}/notes-conflicts.XXXXXX") || exit 1
+fi
+
+echo "Unmerged note content conflicts: $record_count"
+while IFS=$'\t' read -r id readable git_path; do
+  [ -n "$id" ] || continue
+  echo "  $readable ($git_path)"
+done <<< "$records"
+
+notes_conflict_write_artifacts "$repo_root" "$notes_dir" "$out_dir" "$records"
+notes_conflict_print_next_steps "$out_dir"
