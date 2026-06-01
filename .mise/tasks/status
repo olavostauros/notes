@@ -5,6 +5,8 @@
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
+source "$MISE_CONFIG_ROOT/lib/suppress.sh"
 source "$MISE_CONFIG_ROOT/lib/changes.sh"
 require_git
 require_rudi
@@ -66,21 +68,23 @@ fi
 changes_modified=0
 changes_new=0
 changes_deleted=0
+changes_stale=0
 
 if [ "$obf_status" = "deobfuscated" ]; then
   changes=$(detect_changes "$TARGET_DIR/$NOTES_DIR" 2>/dev/null) || true
   if [ -n "$changes" ]; then
     while IFS=$'\t' read -r chg_status chg_relpath; do
       case "$chg_status" in
-        modified) ((changes_modified++)) || true ;;
-        new)      ((changes_new++)) || true ;;
-        deleted)  ((changes_deleted++)) || true ;;
+        modified)       ((changes_modified++)) || true ;;
+        new)            ((changes_new++)) || true ;;
+        deleted)        ((changes_deleted++)) || true ;;
+        stale-readable) ((changes_stale++)) || true ;;
       esac
     done <<< "$changes"
   fi
 fi
 
-changes_total=$((changes_modified + changes_new + changes_deleted))
+changes_total=$((changes_modified + changes_new + changes_deleted + changes_stale))
 
 # --- Output ---
 
@@ -104,13 +108,14 @@ if [ "$JSON" = "true" ]; then
       --argjson chg_modified "$changes_modified" \
       --argjson chg_new "$changes_new" \
       --argjson chg_deleted "$changes_deleted" \
+      --argjson chg_stale "$changes_stale" \
       --argjson chg_total "$changes_total" \
       --argjson incomplete_conflicts "$incomplete_conflicts" \
       '{
         encryption: { status: $enc, unlocked: $enc_unlocked },
         obfuscation: { status: $obf, notes: $total_notes },
         incomplete_deobfuscation: { conflicts: $incomplete_conflicts },
-        changes: { total: $chg_total, modified: $chg_modified, new: $chg_new, deleted: $chg_deleted }
+        changes: { total: $chg_total, modified: $chg_modified, new: $chg_new, deleted: $chg_deleted, stale_readable: $chg_stale }
       }'
   fi
 else
@@ -136,7 +141,7 @@ else
     fi
     if [ "$obf_status" = "deobfuscated" ]; then
       if [ "$changes_total" -gt 0 ]; then
-        echo "Changes:     $changes_total ($changes_modified modified, $changes_new new, $changes_deleted deleted)"
+        echo "Changes:     $changes_total ($changes_modified modified, $changes_new new, $changes_deleted deleted, $changes_stale stale-readable)"
       else
         echo "Changes:     none"
       fi

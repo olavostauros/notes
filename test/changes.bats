@@ -30,6 +30,45 @@ setup() {
   set_status_suppression "$NOTES_CALLER_PWD/notes"
 }
 
+record_deobfuscation_state_for_manifest() {
+  local ids=()
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    ids+=("$id")
+  done < "$MANIFEST"
+  _record_deobfuscation_base_hashes "$NOTES_CALLER_PWD/notes" "${ids[@]}"
+}
+
+delete_manifest_entry_from_head() {
+  local relpath="$1"
+  local id
+  id=$(manifest_id_for_name "$MANIFEST" "$relpath")
+  [ -n "$id" ]
+
+  git -C "$NOTES_CALLER_PWD" update-index --no-assume-unchanged "notes/$id" 2>/dev/null || true
+  git -C "$NOTES_CALLER_PWD" rm -q --cached "notes/$id"
+  awk -F '\t' -v path="$relpath" '$2 != path { print }' "$MANIFEST" > "$MANIFEST.tmp"
+  mv "$MANIFEST.tmp" "$MANIFEST"
+  git -C "$NOTES_CALLER_PWD" add notes/.manifest
+  git -C "$NOTES_CALLER_PWD" commit -q -m "delete $relpath"
+
+  printf '%s' "$id"
+}
+
+rename_manifest_entry_in_head() {
+  local old_relpath="$1" new_relpath="$2"
+  local id
+  id=$(manifest_id_for_name "$MANIFEST" "$old_relpath")
+  [ -n "$id" ]
+
+  awk -F '\t' -v old="$old_relpath" -v new="$new_relpath" 'BEGIN { OFS="\t" } $2 == old { $2 = new } { print }' "$MANIFEST" > "$MANIFEST.tmp"
+  mv "$MANIFEST.tmp" "$MANIFEST"
+  git -C "$NOTES_CALLER_PWD" add notes/.manifest
+  git -C "$NOTES_CALLER_PWD" commit -q -m "rename $old_relpath"
+
+  printf '%s' "$id"
+}
+
 # ── detect_changes ────────────────────────────────────────────
 
 @test "detect_changes: no changes when files match HEAD" {
@@ -318,7 +357,7 @@ setup() {
   [[ "$output" != *"notes/alpha.md"* ]]
 }
 
-@test "notes stage: no args skips readable files left from another branch" {
+@test "notes stage: no args refuses stale readable files left from another branch" {
   local repo="$BATS_TEST_TMPDIR/branch-repo"
   mkdir -p "$repo/notes"
   git -C "$repo" init -q -b main
@@ -345,15 +384,116 @@ setup() {
   [ -f "$repo/notes/beta.md" ]
   echo "alpha edit" >> "$repo/notes/alpha.md"
 
-  NOTES_CALLER_PWD="$repo" run notes stage
+  NOTES_CALLER_PWD="$repo" run notes changes --summary
   [ "$status" -eq 0 ]
-  [[ "$output" == *"staged: alpha.md"* ]]
-  [[ "$output" == *"Skipped 1 new note(s)"* ]]
-  [[ "$output" == *"new: beta.md"* ]]
+  [[ "$output" == *"stale-readable: beta.md"* ]]
+  [[ "$output" != *"new:       beta.md"* ]]
+
+  NOTES_CALLER_PWD="$repo" run notes stage
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"stale readable note"* ]]
+  [[ "$output" == *"beta.md"* ]]
 
   run git -C "$repo" diff --cached --name-only
-  [[ "$output" == *"notes/alpha.md"* ]]
+  [[ "$output" != *"notes/alpha.md"* ]]
   [[ "$output" != *"notes/beta.md"* ]]
+}
+
+@test "notes changes: stale readable is not reported as a new note" {
+  record_deobfuscation_state_for_manifest
+  delete_manifest_entry_from_head "beta.md" > /dev/null
+
+  run notes changes --summary
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale-readable: beta.md"* ]]
+  [[ "$output" != *"new:       beta.md"* ]]
+}
+
+@test "notes stage: refuses explicit stale readable note" {
+  record_deobfuscation_state_for_manifest
+  delete_manifest_entry_from_head "beta.md" > /dev/null
+
+  run notes stage beta.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"stale readable note"* ]]
+  [[ "$output" == *"beta.md"* ]]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [[ "$output" != *"notes/beta.md"* ]]
+}
+
+@test "deobfuscate removes clean stale readable after manifest deletion" {
+  record_deobfuscation_state_for_manifest
+  delete_manifest_entry_from_head "beta.md" > /dev/null
+
+  run notes deobfuscate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed stale readable: beta.md"* ]]
+  [ ! -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+  ! grep -q "notes/beta.md" "$NOTES_CALLER_PWD/.git/info/exclude"
+
+  run notes changes --summary
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No changes."* ]]
+}
+
+@test "deobfuscate removes clean stale readable with legacy id-hash state" {
+  local beta_id beta_hash state
+  beta_id=$(manifest_id_for_name "$MANIFEST" "beta.md")
+  beta_hash=$(git -C "$NOTES_CALLER_PWD" hash-object -- "$NOTES_CALLER_PWD/notes/beta.md")
+  state="$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state"
+  mkdir -p "$(dirname "$state")"
+  printf '%s\t%s\n' "$beta_id" "$beta_hash" > "$state"
+
+  delete_manifest_entry_from_head "beta.md" > /dev/null
+
+  run notes deobfuscate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed stale readable: beta.md"* ]]
+  [ ! -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+
+  run notes changes --summary
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No changes."* ]]
+}
+
+@test "deobfuscate quarantines dirty stale readable after manifest deletion" {
+  record_deobfuscation_state_for_manifest
+  echo "local edit" >> "$NOTES_CALLER_PWD/notes/beta.md"
+  delete_manifest_entry_from_head "beta.md" > /dev/null
+
+  run notes deobfuscate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"quarantined stale readable note: beta.md"* ]]
+  [ ! -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+  [ -f "$NOTES_CALLER_PWD/.git/info/notes-stale-readable/beta.md" ]
+  [[ "$(cat "$NOTES_CALLER_PWD/.git/info/notes-stale-readable/beta.md")" == *"local edit"* ]]
+  ! grep -q "notes/beta.md" "$NOTES_CALLER_PWD/.git/info/exclude"
+
+  run notes changes --summary
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No changes."* ]]
+}
+
+@test "deobfuscate reconciles stale old path when manifest renames a note" {
+  record_deobfuscation_state_for_manifest
+  local beta_id
+  beta_id=$(rename_manifest_entry_in_head "beta.md" "renamed-beta.md")
+  git -C "$NOTES_CALLER_PWD" update-index --no-assume-unchanged "notes/$beta_id" 2>/dev/null || true
+  git -C "$NOTES_CALLER_PWD" checkout -- "notes/$beta_id"
+
+  run notes deobfuscate
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed stale readable: beta.md"* ]]
+  [ ! -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+  [ -f "$NOTES_CALLER_PWD/notes/renamed-beta.md" ]
+  [[ "$(cat "$NOTES_CALLER_PWD/notes/renamed-beta.md")" == *"# Beta"* ]]
+  ! grep -q "notes/beta.md" "$NOTES_CALLER_PWD/.git/info/exclude"
+  grep -q "notes/renamed-beta.md" "$NOTES_CALLER_PWD/.git/info/exclude"
+
+  run notes changes --summary
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No changes."* ]]
 }
 
 @test "notes stage: skipped new manifest entry does not leak through pre-commit hook" {

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Generic hook dispatcher — runs all executable scripts in <hook-name>.d/
-# Used for pre-commit, post-commit, and post-merge hooks.
+# Used for pre-commit, post-commit, post-merge, and post-checkout hooks.
 # Pre-commit: exits on first failure (blocks the commit).
-# Post-commit: continues on failure (commit is already done).
+# Post-commit/post-merge/post-checkout: continues on failure (git already moved).
 set -eo pipefail
 
 HOOK_NAME="$(basename "$0")"
@@ -12,9 +12,9 @@ shopt -s nullglob
 for hook in "$HOOK_DIR"/*; do
   if [ -x "$hook" ]; then
     if [[ "$HOOK_NAME" == pre-* ]]; then
-      "$hook" || exit $?
+      "$hook" "$@" || exit $?
     else
-      "$hook" || echo "${HOOK_NAME} hook failed: $hook" >&2
+      "$hook" "$@" || echo "${HOOK_NAME} hook failed: $hook" >&2
     fi
   fi
 done

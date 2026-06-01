@@ -183,9 +183,13 @@ rename_to_obfuscated() {
   rm -f "$merged" "$new_entries"
 }
 
-# Local state file recording the content hash last restored for each ID.
-# This lets deobfuscation distinguish a clean stale readable file (safe to
-# update after pull/merge) from a locally-edited readable file (must preserve).
+# Local state file recording the readable path and content hash last restored
+# for each ID. This lets deobfuscation distinguish a clean generated readable
+# file (safe to update/remove after pull/merge/checkout) from a locally-edited
+# readable file (must preserve).
+#
+# Current row format: <id>\t<relpath>\t<hash>
+# Legacy row format:  <id>\t<hash>
 _deobfuscation_state_file() {
   local notes_dir="$1"
   resolve_notes_dir "$notes_dir" || return 1
@@ -201,7 +205,12 @@ _deobfuscation_base_hash_for_id() {
   # _record_deobfuscation_base_hashes); newer writes shadow older ones, and
   # concurrent writers can't corrupt each other the way a tmp+mv
   # read-modify-write would.
-  awk -F '\t' -v wanted="$id" '$1 == wanted { found=$2 } END { if (found != "") print found }' "$state"
+  awk -F '\t' -v wanted="$id" '
+    $1 == wanted {
+      if (NF >= 3) found=$3; else found=$2
+    }
+    END { if (found != "") print found }
+  ' "$state"
 }
 
 _deobfuscation_readable_matches_base_ref() {
@@ -253,7 +262,7 @@ _record_deobfuscation_base_hashes() {
     [ -z "$relpath" ] && continue
     [ -f "$notes_dir/$relpath" ] || continue
     sha=$(git -C "$repo_root" hash-object -- "$notes_dir/$relpath") || return 1
-    printf '%s\t%s\n' "$id" "$sha" >> "$state"
+    printf '%s\t%s\t%s\n' "$id" "$relpath" "$sha" >> "$state"
   done
 }
 

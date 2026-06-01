@@ -15,21 +15,39 @@ run_notes() {
   (cd "$NOTES_TOOL_ROOT" && "$MISE_BIN" run -q "$@")
 }
 
-if [ -f "$NOTES_ROOT/.manifest" ]; then
-  # Only deobfuscate if files are currently obfuscated
-  obfuscated=0
+has_deobfuscated_readable_state() {
+  local repo_root exclude_file id relpath
+  repo_root="$(git rev-parse --show-toplevel)"
+  exclude_file="$repo_root/.git/info/exclude"
+
+  if grep -q '^# BEGIN notes-obfuscation$' "$exclude_file" 2>/dev/null; then
+    return 0
+  fi
+
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    [ -f "$repo_root/$NOTES_ROOT/$relpath" ] && return 0
+  done < "$repo_root/$NOTES_ROOT/.manifest"
+
+  return 1
+}
+
+has_obfuscated_manifest_file() {
+  local f base
   for f in "$NOTES_ROOT/"*; do
     [ ! -f "$f" ] && continue
     base=$(basename "$f")
     [[ "$base" == ".manifest" ]] && continue
-    # Check if basename is a known ID in the manifest
+    # Check if basename is a known ID in the manifest.
     if grep -q "^${base}	" "$NOTES_ROOT/.manifest"; then
-      obfuscated=1
-      break
+      return 0
     fi
   done
+  return 1
+}
 
-  if [ "$obfuscated" -eq 1 ]; then
+if [ -f "$NOTES_ROOT/.manifest" ]; then
+  if has_obfuscated_manifest_file || has_deobfuscated_readable_state; then
     # Run the notes package version that installed this hook, not whichever
     # `notes` command happens to appear first on PATH. Suppress stdout (rename
     # output) but let stderr through so errors from Layer 1 are visible.

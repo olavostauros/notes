@@ -172,6 +172,34 @@ setup() {
   [[ "$output" == *"notes changes alpha.md"* ]]
 }
 
+# ── Checkout ──────────────────────────────────────────────────
+
+@test "checkout: post-checkout hook reconciles deleted readable note" {
+  local beta_id
+  beta_id=$(grep "beta.md" "$LOCAL/notes/.manifest" | cut -f1)
+  [ -f "$LOCAL/notes/beta.md" ]
+
+  git -C "$LOCAL" checkout -q -b delete-beta
+  git -C "$LOCAL" update-index --no-assume-unchanged "notes/$beta_id" 2>/dev/null || true
+  git -C "$LOCAL" rm -q --cached "notes/$beta_id"
+  grep -v $'\tbeta.md$' "$LOCAL/notes/.manifest" > "$LOCAL/notes/.manifest.tmp"
+  mv "$LOCAL/notes/.manifest.tmp" "$LOCAL/notes/.manifest"
+  git -C "$LOCAL" add notes/.manifest
+  git -C "$LOCAL" commit -q --no-verify -m "delete beta"
+  [ ! -f "$LOCAL/notes/beta.md" ]
+
+  git -C "$LOCAL" checkout -q main
+  [ -f "$LOCAL/notes/beta.md" ]
+
+  git -C "$LOCAL" checkout -q delete-beta
+  [ ! -f "$LOCAL/notes/beta.md" ]
+  ! grep -q "notes/beta.md" "$LOCAL/.git/info/exclude"
+
+  NOTES_CALLER_PWD="$LOCAL" run notes changes --summary
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No changes."* ]]
+}
+
 # ── Merge ─────────────────────────────────────────────────────
 
 @test "merge: concurrent note additions auto-merge via manifest driver" {
@@ -240,6 +268,10 @@ setup() {
   echo "branch-a edit" >> "$LOCAL/notes/$alpha_id"
   git -C "$LOCAL" add "notes/$alpha_id"
   git -C "$LOCAL" commit -q --no-verify -m "branch-a edits alpha"
+
+  # Post-commit deobfuscates; return to obfuscated state for this low-level
+  # conflict test before switching branches.
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
 
   # Back to main, edit alpha differently
   git -C "$LOCAL" checkout -q main

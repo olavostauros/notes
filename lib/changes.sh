@@ -39,7 +39,7 @@ detect_changes() {
   local repo_root="$RESOLVED_REPO_ROOT"
   local notes_dir="$RESOLVED_NOTES_DIR"
 
-  local tmp_dir head_in head_out disk_in disk_out manifest_ids manifest_names
+  local tmp_dir head_in head_out disk_in disk_out manifest_ids manifest_names stale_readables
   local tracked_attr_in readable_attr_in tracked_attr_out readable_attr_out
   tmp_dir=$(mktemp -d) || return
   head_in="$tmp_dir/head-in"
@@ -48,6 +48,7 @@ detect_changes() {
   disk_out="$tmp_dir/disk-out"
   manifest_ids="$tmp_dir/manifest-ids"
   manifest_names="$tmp_dir/manifest-names"
+  stale_readables="$tmp_dir/stale-readables"
   tracked_attr_in="$tmp_dir/tracked-attr-in"
   readable_attr_in="$tmp_dir/readable-attr-in"
   tracked_attr_out="$tmp_dir/tracked-attr-out"
@@ -56,6 +57,7 @@ detect_changes() {
   : > "$disk_in"
   : > "$manifest_ids"
   : > "$manifest_names"
+  : > "$stale_readables"
   : > "$tracked_attr_in"
   : > "$readable_attr_in"
 
@@ -71,6 +73,13 @@ detect_changes() {
       printf '%s/%s\n' "$notes_dir" "$relpath" >> "$readable_attr_in"
     fi
   done < "$manifest"
+
+  if declare -F detect_stale_readable_notes >/dev/null 2>&1; then
+    detect_stale_readable_notes "$abs_notes_dir" 2>/dev/null \
+      | while IFS=$'\t' read -r _stale_state stale_relpath; do
+          [ -n "$stale_relpath" ] && printf '%s\n' "$stale_relpath"
+        done > "$stale_readables" || true
+  fi
 
   git -C "$repo_root" cat-file --batch-check='%(objectname)' < "$head_in" > "$head_out" 2>/dev/null || {
     rm -rf "$tmp_dir"
@@ -167,6 +176,12 @@ detect_changes() {
     # Skip files already in the manifest by readable name.
     grep -Fxq "$relpath" "$manifest_names" && continue
 
+    # Stale generated readables are a reconciliation issue, not author intent.
+    if grep -Fxq "$relpath" "$stale_readables"; then
+      printf 'stale-readable\t%s\n' "$relpath"
+      continue
+    fi
+
     # This is a genuinely new file.
     printf 'new\t%s\n' "$relpath"
   done < <(find "$abs_notes_dir" -type f | sort)
@@ -234,6 +249,11 @@ show_diffs() {
         git -C "$repo_root" cat-file --filters "HEAD:$git_path" > "$tmp" 2>/dev/null
         diff -u --label "a/$relpath" --label /dev/null "$tmp" /dev/null || true
         rm -f "$tmp"
+        echo ""
+        ;;
+      stale-readable)
+        echo "=== $relpath (stale readable) ==="
+        echo "This readable note belonged to a previous manifest state. Run 'notes deobfuscate' to remove or quarantine it before staging."
         echo ""
         ;;
     esac

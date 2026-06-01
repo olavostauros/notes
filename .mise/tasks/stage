@@ -6,6 +6,8 @@
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
+source "$MISE_CONFIG_ROOT/lib/suppress.sh"
 source "$MISE_CONFIG_ROOT/lib/changes.sh"
 require_git
 
@@ -48,6 +50,29 @@ fi
 
 to_stage=()
 skipped_new=()
+stale_notes=()
+
+while IFS=$'\t' read -r status relpath; do
+  [ "$status" = "stale-readable" ] || continue
+  if $explicit_files; then
+    match=false
+    for f in "${ARGS[@]}"; do
+      [ "$f" = "$relpath" ] && match=true && break
+    done
+    $match || continue
+  fi
+  stale_notes+=("$relpath")
+done <<< "$changes"
+
+if [ ${#stale_notes[@]} -gt 0 ]; then
+  echo "Error: stale readable note(s) detected; refusing to stage." >&2
+  echo "These files belonged to a previous manifest state and may reintroduce deleted/renamed notes:" >&2
+  for relpath in ${stale_notes[@]+"${stale_notes[@]}"}; do
+    echo "  $relpath" >&2
+  done
+  echo "Run 'notes deobfuscate' to remove clean stale files or quarantine dirty ones, then retry." >&2
+  exit 1
+fi
 
 conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir") || true
 if [ -n "$conflicting_notes" ]; then
@@ -113,6 +138,9 @@ while IFS=$'\t' read -r status relpath; do
     deleted)
       # For deleted notes, we need to remove the obfuscated file from the index
       to_stage+=("$relpath")
+      ;;
+    stale-readable)
+      # Handled above so staging never accidentally adopts stale generated files.
       ;;
   esac
 done <<< "$changes"

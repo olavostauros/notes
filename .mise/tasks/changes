@@ -6,6 +6,8 @@
 set -eo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
+source "$MISE_CONFIG_ROOT/lib/suppress.sh"
 source "$MISE_CONFIG_ROOT/lib/changes.sh"
 require_git
 
@@ -37,7 +39,7 @@ if [ "${usage_summary:-}" = "true" ]; then
   fi
 
   # Apply file filter if specified
-  modified=0 new=0 deleted=0
+  modified=0 new=0 deleted=0 stale=0
   while IFS=$'\t' read -r status relpath; do
     if [ ${#ARGS[@]} -gt 0 ] && [ -n "${ARGS[0]}" ]; then
       match=false
@@ -48,18 +50,19 @@ if [ "${usage_summary:-}" = "true" ]; then
     fi
 
     case "$status" in
-      modified) echo "  modified:  $relpath"; ((modified++)) || true ;;
-      new)      echo "  new:       $relpath"; ((new++)) || true ;;
-      deleted)  echo "  deleted:   $relpath"; ((deleted++)) || true ;;
+      modified)       echo "  modified:  $relpath"; ((modified++)) || true ;;
+      new)            echo "  new:       $relpath"; ((new++)) || true ;;
+      deleted)        echo "  deleted:   $relpath"; ((deleted++)) || true ;;
+      stale-readable) echo "  stale-readable: $relpath"; ((stale++)) || true ;;
     esac
   done <<< "$changes"
 
-  total=$((modified + new + deleted))
+  total=$((modified + new + deleted + stale))
   if [ "$total" -eq 0 ]; then
     echo "No changes."
   else
     echo ""
-    echo "$total change(s): $modified modified, $new new, $deleted deleted"
+    echo "$total change(s): $modified modified, $new new, $deleted deleted, $stale stale-readable"
   fi
 else
   # Diff mode: show full diffs

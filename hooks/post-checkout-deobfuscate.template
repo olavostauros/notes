@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# After branch checkout, reconcile readable note filenames from the checked-out
+# manifest. File checkouts do not normally change the manifest; avoid surprising
+# users by running only for branch checkouts (third hook arg = 1).
+set -eo pipefail
+
+NOTES_ROOT="__NOTES_DIR__"
+NOTES_TOOL_ROOT="__NOTES_TOOL_ROOT__"
+MISE_BIN="__MISE_BIN__"
+
+OLD_REF="${1:-}"
+CHECKOUT_TYPE="${3:-}"
+
+run_notes() {
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel)"
+  export NOTES_CALLER_PWD="$repo_root"
+  (cd "$NOTES_TOOL_ROOT" && "$MISE_BIN" run -q "$@")
+}
+
+has_deobfuscated_readable_state() {
+  local repo_root exclude_file id relpath
+  repo_root="$(git rev-parse --show-toplevel)"
+  exclude_file="$repo_root/.git/info/exclude"
+
+  if grep -q '^# BEGIN notes-obfuscation$' "$exclude_file" 2>/dev/null; then
+    return 0
+  fi
+
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    [ -f "$repo_root/$NOTES_ROOT/$relpath" ] && return 0
+  done < "$repo_root/$NOTES_ROOT/.manifest"
+
+  return 1
+}
+
+if [ "$CHECKOUT_TYPE" = "1" ] && [ -f "$NOTES_ROOT/.manifest" ] && has_deobfuscated_readable_state; then
+  # OLD_REF lets deobfuscate prove a missing state-row readable is clean stale
+  # pre-checkout content before refreshing it.
+  if NOTES_DEOBFUSCATE_BASE_REF="$OLD_REF" run_notes deobfuscate >/dev/null; then
+    :
+  else
+    rc=$?
+    cat >&2 <<EOF
+Warning: git completed, but notes deobfuscation is incomplete.
+Run 'notes status' to see conflicts, and 'notes changes <file>' before staging.
+EOF
+    exit "$rc"
+  fi
+fi
