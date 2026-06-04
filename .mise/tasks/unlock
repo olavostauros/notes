@@ -9,12 +9,20 @@ require_initialized
 require_rudi
 
 cd "$TARGET_DIR"
-rudi unlock
 
-# Known limitation: rudi unlock decrypts ALL git-crypt-encrypted files,
-# not just notes. This also decrypts the modules manifest and anything
-# else using git-crypt in this repo. Tracked in KnickKnackLabs/rudi#5.
-echo "Note: unlock decrypts all encrypted files in this repo (rudi#5)."
+# Idempotency (issue #42): only run the git-crypt unlock mutation if the repo is
+# locked. `rudi/git-crypt unlock` refuses on a "dirty" worktree, but an already-
+# unlocked, deobfuscated repo legitimately shows obfuscation noise (D <id> /
+# ?? <name>) and may carry local edits. Re-running unlock there must be a no-op.
+if encryption_unlocked; then
+  echo "Already unlocked."
+else
+  rudi unlock
+  # Known limitation: rudi unlock decrypts ALL git-crypt-encrypted files, not just
+  # notes — also the modules manifest and anything else using git-crypt here.
+  # Tracked in KnickKnackLabs/rudi#5.
+  echo "Note: unlock decrypts all encrypted files in this repo (rudi#5)."
+fi
 
 # Deobfuscate filenames if a manifest exists
 if [ -f "$TARGET_DIR/notes/.manifest" ]; then
