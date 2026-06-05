@@ -62,12 +62,18 @@ install_obfuscation_hook() {
 # Configures git to use our custom merge driver for .manifest files.
 install_manifest_merge_driver() {
   local notes_dir="${1:-notes}"
-  local driver_path="$HOOKS_REPO_DIR/lib/manifest-merge-driver.sh"
   local gitattributes="$TARGET_DIR/.gitattributes"
 
-  # Register the merge driver in git config
+  # Register the merge driver in repo-local git config.
+  #
+  # Resolve the driver at merge time via the `notes` shim on PATH, not by writing
+  # an absolute path. An absolute path pins the driver to the notes version
+  # installed at setup time; on upgrade (shiv installs each version to a new
+  # directory) that path goes stale, git silently falls back to the default
+  # recursive merge, and the encrypted manifest gets corrupted on any concurrent
+  # edit — exactly the failure mode this driver exists to prevent (notes#48/#50).
   git -C "$TARGET_DIR" config merge.manifest.name "Union merge driver for notes manifest"
-  git -C "$TARGET_DIR" config merge.manifest.driver "bash \"$driver_path\" %O %A %B"
+  git -C "$TARGET_DIR" config merge.manifest.driver "notes merge-driver %O %A %B"
 
   # Add .gitattributes entry if not already present
   local pattern="$notes_dir/.manifest merge=manifest"

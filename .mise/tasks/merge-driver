@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#MISE description="Custom git merge driver for notes .manifest (invoked by git, not users)"
+#MISE hide=true
+#USAGE arg "<ancestor>" help="Common ancestor file (%O)"
+#USAGE arg "<current>" help="Current branch file (%A) — written in place"
+#USAGE arg "<other>" help="Other branch file (%B)"
+set -euo pipefail
+
+# Invoked by git's merge machinery via the `manifest` driver config.
+# Resolves at merge-time via PATH → shiv shim → current installed notes version,
+# so upgrading notes does not leave a stale absolute path in .git/config (which
+# would silently fall back to the default merge strategy and corrupt the
+# encrypted manifest — exactly the failure notes#48's driver exists to prevent).
+#
+# Path handling: git passes %O %A %B as paths relative to the worktree where the
+# merge happens (e.g., `.merge_file_AbCdEf`). The shiv shim cd's into the notes
+# package dir before exec'ing mise, so by the time we run those relative paths
+# point nowhere. Cd back into `$NOTES_CALLER_PWD` (which the shim exported as the
+# user's original cwd) so the paths resolve. The lib script is invoked via
+# $MISE_CONFIG_ROOT which is absolute and unaffected.
+#
+# Refuse rather than guess: if caller context is missing, falling back to $PWD
+# would silently re-introduce the very bug the cd guards against (in production
+# $PWD = the notes pkg dir the shim cd'd into, which is exactly the broken
+# state). Better to fail the merge loudly than to corrupt the manifest. To invoke
+# this task manually outside the shim, set NOTES_CALLER_PWD explicitly:
+# `NOTES_CALLER_PWD=$PWD mise run merge-driver ...`.
+CALLER_DIR="${NOTES_CALLER_PWD:-${CALLER_PWD:-}}"
+if [ -z "$CALLER_DIR" ]; then
+  echo "notes merge-driver: NOTES_CALLER_PWD is not set." >&2
+  echo "  This task must be invoked via the notes shim (which exports NOTES_CALLER_PWD)." >&2
+  echo "  Aborting to avoid producing a corrupt manifest from unresolved relative paths." >&2
+  exit 1
+fi
+cd "$CALLER_DIR"
+exec bash "$MISE_CONFIG_ROOT/lib/manifest-merge-driver.sh" \
+  "${usage_ancestor}" "${usage_current}" "${usage_other}"

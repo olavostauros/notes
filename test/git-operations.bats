@@ -13,6 +13,15 @@ assert_gitcrypt_blob() {
   [ "$header" = "GITCRYPT" ] || fail "expected encrypted blob at $ref_path"
 }
 
+# Point the manifest merge driver at the in-tree script. install-hooks writes
+# 'notes merge-driver %O %A %B' (resolves via the shim on PATH at merge time —
+# notes#50), but the test harness has no installed shim git can drive mid-merge,
+# so rewrite to the local driver to exercise the in-tree merge logic.
+_use_local_merge_driver() {
+  git -C "$1" config merge.manifest.driver \
+    "bash $REPO_DIR/lib/manifest-merge-driver.sh %O %A %B"
+}
+
 # Override default setup — we need a remote + local pair, not a single repo.
 setup() {
   source "$REPO_DIR/lib/common.sh"
@@ -54,6 +63,7 @@ setup() {
   export NOTES_CALLER_PWD="$LOCAL"
   notes deobfuscate
   notes install-hooks
+  _use_local_merge_driver "$LOCAL"
 }
 
 # ── Pull ──────────────────────────────────────────────────────
@@ -364,6 +374,7 @@ EOT
   git -C "$repo" commit -q -m "init"
 
   NOTES_CALLER_PWD="$repo" notes install-hooks >/dev/null
+  _use_local_merge_driver "$repo"
 
   git -C "$repo" switch -q -c feature
   cat > "$repo/notes/.manifest" <<'EOT'
