@@ -62,12 +62,12 @@ install_obfuscation_hook() {
 # Configures git to use our custom merge driver for .manifest files.
 install_manifest_merge_driver() {
   local notes_dir="${1:-notes}"
-  local driver_path="$HOOKS_REPO_DIR/lib/manifest-merge-driver.sh"
   local gitattributes="$TARGET_DIR/.gitattributes"
 
-  # Register the merge driver in git config
+  # Resolve the driver through the stable notes shim instead of pinning setup to
+  # one installed package path. The task wrapper handles git's relative paths.
   git -C "$TARGET_DIR" config merge.manifest.name "Union merge driver for notes manifest"
-  git -C "$TARGET_DIR" config merge.manifest.driver "bash \"$driver_path\" %O %A %B"
+  git -C "$TARGET_DIR" config merge.manifest.driver "notes merge-driver %O %A %B"
 
   # Add .gitattributes entry if not already present
   local pattern="$notes_dir/.manifest merge=manifest"

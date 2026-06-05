@@ -595,3 +595,17 @@ EOT
   grep -qF "b	y" "$OURS" || fail "missing b"
   grep -qF "c	z" "$OURS" || fail "missing c"
 }
+
+# ── Config stability across upgrades (notes#50) ──────────────
+
+@test "install_manifest_merge_driver: config resolves via PATH shim, no absolute path" {
+  source "$REPO_DIR/lib/hooks.sh"
+  install_manifest_merge_driver
+
+  # Resolves via the `notes` shim on PATH at merge time — an absolute path would
+  # go stale when shiv installs a new version, silently disabling the driver.
+  run git -C "$TARGET_DIR" config --get merge.manifest.driver
+  [ "$status" -eq 0 ]
+  [ "$output" = "notes merge-driver %O %A %B" ]
+  ! printf '%s' "$output" | grep -q "/"
+}
