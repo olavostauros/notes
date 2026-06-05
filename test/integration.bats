@@ -324,6 +324,31 @@ run_encryption_hook() {
   [[ "$output" == *"notes/leak.md"* ]]
 }
 
+@test "encryption hook uses staged attributes when checking staged plaintext (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  # The commit snapshot can differ from the worktree. If the hook consults
+  # worktree attributes, it can miss a staged encryption rule and allow a
+  # plaintext blob into an encrypted path.
+  printf 'notes/** filter=git-crypt diff=git-crypt\n' > "$TARGET_DIR/.gitattributes"
+  git -C "$TARGET_DIR" add .gitattributes
+  printf '# worktree attributes intentionally differ from the index\n' > "$TARGET_DIR/.gitattributes"
+
+  mkdir -p "$TARGET_DIR/notes"
+  printf 'PLAINTEXT-LEAK\n' > "$TARGET_DIR/notes/leak.md"
+  local blob
+  blob=$(printf 'PLAINTEXT-LEAK\n' | git -C "$TARGET_DIR" hash-object -w --stdin)
+  git -C "$TARGET_DIR" update-index --add --cacheinfo 100644 "$blob" notes/leak.md
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"should be encrypted but are plaintext"* ]]
+  [[ "$output" == *"notes/leak.md"* ]]
+}
+
 @test "encryption hook passes when an encrypted-path file is properly encrypted (#49)" {
   notes setup --yes
   local fpr
