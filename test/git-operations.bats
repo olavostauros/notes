@@ -13,10 +13,9 @@ assert_gitcrypt_blob() {
   [ "$header" = "GITCRYPT" ] || fail "expected encrypted blob at $ref_path"
 }
 
-# Point the manifest merge driver at the in-tree script. install-hooks writes
-# 'notes merge-driver %O %A %B' (resolves via the shim on PATH at merge time —
-# notes#50), but the test harness has no installed shim git can drive mid-merge,
-# so rewrite to the local driver to exercise the in-tree merge logic.
+# The installed config resolves via the notes shim. The test harness uses the
+# in-tree script so git can exercise the same merge logic without an installed
+# package shim.
 _use_local_merge_driver() {
   git -C "$1" config merge.manifest.driver \
     "bash $REPO_DIR/lib/manifest-merge-driver.sh %O %A %B"

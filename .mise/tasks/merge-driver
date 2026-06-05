@@ -6,25 +6,12 @@
 #USAGE arg "<other>" help="Other branch file (%B)"
 set -euo pipefail
 
-# Invoked by git's merge machinery via the `manifest` driver config.
-# Resolves at merge-time via PATH → shiv shim → current installed notes version,
-# so upgrading notes does not leave a stale absolute path in .git/config (which
-# would silently fall back to the default merge strategy and corrupt the
-# encrypted manifest — exactly the failure notes#48's driver exists to prevent).
+# Git passes %O/%A/%B relative to the merge worktree. The shiv shim runs this
+# task from the installed notes package, so return to the caller's worktree
+# before handing those relative paths to the real driver.
 #
-# Path handling: git passes %O %A %B as paths relative to the worktree where the
-# merge happens (e.g., `.merge_file_AbCdEf`). The shiv shim cd's into the notes
-# package dir before exec'ing mise, so by the time we run those relative paths
-# point nowhere. Cd back into `$NOTES_CALLER_PWD` (which the shim exported as the
-# user's original cwd) so the paths resolve. The lib script is invoked via
-# $MISE_CONFIG_ROOT which is absolute and unaffected.
-#
-# Refuse rather than guess: if caller context is missing, falling back to $PWD
-# would silently re-introduce the very bug the cd guards against (in production
-# $PWD = the notes pkg dir the shim cd'd into, which is exactly the broken
-# state). Better to fail the merge loudly than to corrupt the manifest. To invoke
-# this task manually outside the shim, set NOTES_CALLER_PWD explicitly:
-# `NOTES_CALLER_PWD=$PWD mise run merge-driver ...`.
+# Missing caller context is unsafe: using the package directory would make the
+# merge inputs point nowhere. Fail loudly rather than risk corrupting .manifest.
 CALLER_DIR="${NOTES_CALLER_PWD:-${CALLER_PWD:-}}"
 if [ -z "$CALLER_DIR" ]; then
   echo "notes merge-driver: NOTES_CALLER_PWD is not set." >&2

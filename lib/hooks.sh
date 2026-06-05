@@ -64,14 +64,8 @@ install_manifest_merge_driver() {
   local notes_dir="${1:-notes}"
   local gitattributes="$TARGET_DIR/.gitattributes"
 
-  # Register the merge driver in repo-local git config.
-  #
-  # Resolve the driver at merge time via the `notes` shim on PATH, not by writing
-  # an absolute path. An absolute path pins the driver to the notes version
-  # installed at setup time; on upgrade (shiv installs each version to a new
-  # directory) that path goes stale, git silently falls back to the default
-  # recursive merge, and the encrypted manifest gets corrupted on any concurrent
-  # edit — exactly the failure mode this driver exists to prevent (notes#48/#50).
+  # Resolve the driver through the stable notes shim instead of pinning setup to
+  # one installed package path. The task wrapper handles git's relative paths.
   git -C "$TARGET_DIR" config merge.manifest.name "Union merge driver for notes manifest"
   git -C "$TARGET_DIR" config merge.manifest.driver "notes merge-driver %O %A %B"
 
