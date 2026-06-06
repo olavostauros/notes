@@ -72,16 +72,16 @@ def parse_list(value: str) -> list[str]:
     return [parse_scalar(value)]
 
 
-def parse_frontmatter_text(text: str) -> tuple[dict[str, Any] | None, str]:
-    if not text.startswith("---\n"):
-        return None, text
-    end = text.find("\n---", 4)
-    if end == -1:
-        return None, text
+def parse_mapping_text(text: str, *, list_keys: set[str] = LIST_KEYS) -> dict[str, Any]:
+    """Parse the small YAML-ish mapping subset notes uses.
 
+    The parser is deliberately modest. It accepts scalar `key: value` pairs,
+    inline lists for configured list keys, and indented block-list items for
+    those same keys. It is not a general YAML parser.
+    """
     data: dict[str, Any] = {}
     current_list_key: str | None = None
-    for line in text[4:end].splitlines():
+    for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -98,12 +98,23 @@ def parse_frontmatter_text(text: str) -> tuple[dict[str, Any] | None, str]:
         key, value = line.split(":", 1)
         key = key.strip()
         value = value.strip()
-        if key in LIST_KEYS:
+        if key in list_keys:
             data[key] = parse_list(value)
             if not value:
                 current_list_key = key
         else:
             data[key] = parse_scalar(value)
+    return data
+
+
+def parse_frontmatter_text(text: str) -> tuple[dict[str, Any] | None, str]:
+    if not text.startswith("---\n"):
+        return None, text
+    end = text.find("\n---", 4)
+    if end == -1:
+        return None, text
+
+    data = parse_mapping_text(text[4:end])
 
     body_start = end + len("\n---")
     if body_start < len(text) and text[body_start] == "\n":
@@ -118,6 +129,7 @@ def read_frontmatter(path: Path) -> tuple[dict[str, Any] | None, str | None]:
         return None, None
     metadata, body = parse_frontmatter_text(text)
     return metadata, body
+
 
 
 @dataclass(frozen=True)
