@@ -90,25 +90,20 @@ generate_test_key() {
   fpr=$(generate_test_key "$GNUPGHOME")
   notes add-user -- --gpg-key "$fpr"
 
-  # Commit a readable, tracked note (--no-verify so the pre-commit hook doesn't
-  # auto-obfuscate/suppress it), then make an uncommitted local edit. This is the
-  # brownie scenario: an already-unlocked repo whose working tree is dirty —
-  # exactly the state git-crypt/rudi unlock refuses on ("Working directory not clean").
+  # Tracked dirty readable file reproduces git-crypt's unlock guard; see #42.
   mkdir -p "$TARGET_DIR/notes"
   echo "original" > "$TARGET_DIR/notes/secret.md"
   git -C "$TARGET_DIR" add notes/secret.md
   git -C "$TARGET_DIR" commit -q --no-verify -m "Add readable note"
   echo "local edit" >> "$TARGET_DIR/notes/secret.md"
 
-  # Sanity: repo is unlocked and the tree is dirty
   [ -n "$(git -C "$TARGET_DIR" status --porcelain)" ]
 
-  # unlock must no-op cleanly instead of failing on the dirty-tree guard
   run notes unlock
   [ "$status" -eq 0 ]
   [[ "$output" == *"Already unlocked."* ]]
 
-  # The local edit is preserved — unlock did not stash, revert, or re-decrypt
+  # Local edit survives the no-op.
   grep -q "local edit" "$TARGET_DIR/notes/secret.md"
 }
 

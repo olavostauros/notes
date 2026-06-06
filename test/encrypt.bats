@@ -238,14 +238,10 @@ generate_test_key() {
 }
 
 @test "setup --unlock runs unlock after setup" {
-  # On a fresh repo the initializer already holds the git-crypt key, so the repo
-  # is already unlocked. setup --unlock should complete setup and then no-op the
-  # unlock cleanly (issue #42) instead of erroring on the dirty post-setup tree.
+  # Fresh setup already owns the key, so --unlock should no-op cleanly; see #42.
   run notes setup --yes --unlock
-  # Verify setup completed and unlock was attempted
   echo "$output" | grep -q "Installed hooks"
   echo "$output" | grep -q "Unlocking"
-  # Already-unlocked repo: unlock is an idempotent no-op, setup succeeds
   [ "$status" -eq 0 ]
   echo "$output" | grep -q "Already unlocked."
 }
