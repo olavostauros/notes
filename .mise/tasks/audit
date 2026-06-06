@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 #MISE description="Audit the wikilink graph — top inbound/outbound, broken targets"
-#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
-#USAGE flag "--top <n>" help="How many notes to show in top-N lists (default: 10)"
-#USAGE flag "--json" help="Emit full per-note counts as JSON instead of the human-readable summary"
-set -eo pipefail
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+#USAGE flag "--top <n>" default="10" help="How many notes to show in top-N lists"
+#USAGE flag "--json" default=#false help="Emit full per-note counts as JSON instead of the human-readable summary"
+set -euo pipefail
 
-TARGET_DIR="${NOTES_CALLER_PWD:-${CALLER_PWD:-.}}"
-notes_dir="$TARGET_DIR/${usage_dir:-notes}"
+TARGET_DIR="${NOTES_CALLER_PWD:-.}"
+notes_dir="$TARGET_DIR/$usage_dir"
 
 if [ ! -d "$notes_dir" ]; then
   echo "Error: notes directory not found: $notes_dir" >&2
   exit 1
 fi
 
-python3 - "$notes_dir" "${usage_top:-10}" "${usage_json:-false}" <<'PY'
+python3 - "$notes_dir" "$usage_top" "$usage_json" <<'PY'
 """
 notes audit — raw wikilink-graph telemetry.
 
@@ -53,10 +53,7 @@ from collections import defaultdict
 from pathlib import Path
 
 notes_dir = Path(sys.argv[1])
-# Reject non-integer / non-positive --top values up front. Clamping
-# silently to zero (an earlier iteration) produced a confusing
-# "no notes have any links yet" empty-rows message even on link-rich
-# corpora; an explicit error is friendlier than a misleading success.
+# Reject invalid --top values before rendering; empty rows would be misleading.
 try:
     top_n = int(sys.argv[2])
 except ValueError:
@@ -84,13 +81,7 @@ frontmatter_re = re.compile(r"\A\ufeff?---\n.*?\n---\n", re.S)
 
 
 def is_external(target: str) -> bool:
-    # GitHub-style "Org/repo[#issue]" references are not notes — treat
-    # any wikilink target containing "/" as external. Callers that need
-    # additional exclusions (e.g. agent-collective stems, template
-    # placeholders) should layer their own audit on top of
-    # `notes audit --json`. Keeping the audit free of
-    # ecosystem-specific names is the same layer-separation discipline
-    # that keeps `status:` frontmatter out of this tool.
+    # Treat slash-bearing targets as external; callers can layer extra policy on --json.
     return "/" in target
 
 

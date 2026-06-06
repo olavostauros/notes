@@ -96,7 +96,7 @@ EOF
 @test "audit --json emits per-note counts and broken_targets" {
   seed_corpus
 
-  run notes audit -- --json
+  run notes audit --json
   [ "$status" -eq 0 ]
 
   echo "$output" | python3 -c "
@@ -130,7 +130,7 @@ assert notes['alpha']['broken_targets'] == []
 @test "audit --top limits the human-readable lists" {
   seed_corpus
 
-  run notes audit -- --top 2
+  run notes audit --top 2
   [ "$status" -eq 0 ]
   # Top 2 by inbound: alpha (3), gamma (2). beta (1) must not appear in
   # the inbound section; check by counting rows between the headers.
@@ -172,7 +172,7 @@ title: Real
 Some content.
 EOF
 
-  run notes audit -- --json
+  run notes audit --json
   [ "$status" -eq 0 ]
   echo "$output" | python3 -c "
 import json, sys
@@ -198,7 +198,7 @@ title: Target
 Real target.
 EOF
 
-  run notes audit -- --json
+  run notes audit --json
   [ "$status" -eq 0 ]
   echo "$output" | python3 -c "
 import json, sys
@@ -225,7 +225,7 @@ title: Real
 Bare content.
 EOF
 
-  run notes audit -- --json
+  run notes audit --json
   [ "$status" -eq 0 ]
   echo "$output" | python3 -c "
 import json, sys
@@ -251,7 +251,7 @@ title: Real
 Content.
 EOF
 
-  run notes audit -- --json
+  run notes audit --json
   [ "$status" -eq 0 ]
   echo "$output" | python3 -c "
 import json, sys
@@ -278,7 +278,7 @@ title: Target
 Real.
 EOF
 
-  run notes audit -- --json
+  run notes audit --json
   [ "$status" -eq 0 ]
   echo "$output" | python3 -c "
 import json, sys
@@ -309,7 +309,7 @@ EOF
   [[ "$output" == *"Broken wikilink targets (1):"* ]]
   [ "$(echo "$output" | grep -c "\[\[ghost\]\]")" -eq 1 ]
 
-  run notes audit -- --json
+  run notes audit --json
   [ "$status" -eq 0 ]
   echo "$output" | python3 -c "
 import json, sys
@@ -335,7 +335,7 @@ title: Real
 Real.
 EOF
 
-  run notes audit -- --json
+  run notes audit --json
   [ "$status" -eq 0 ]
   echo "$output" | python3 -c "
 import json, sys
@@ -357,7 +357,7 @@ title: Real
 Real.
 EOF
 
-  run notes audit -- --json
+  run notes audit --json
   [ "$status" -eq 0 ]
   echo "$output" | python3 -c "
 import json, sys
@@ -373,17 +373,30 @@ assert data['notes']['real']['inbound'] == 1, data['notes']['real']
 @test "audit rejects non-positive and non-integer --top values" {
   seed_corpus
 
-  run notes audit -- --top 0
+  run notes audit --top 0
   [ "$status" -ne 0 ]
   [[ "$output" == *"--top must be >= 1"* ]]
 
-  run notes audit -- --top -5
+  run notes audit --top -5
   [ "$status" -ne 0 ]
   [[ "$output" == *"--top must be >= 1"* ]]
 
-  run notes audit -- --top abc
+  run notes audit --top abc
   [ "$status" -ne 0 ]
   [[ "$output" == *"--top must be an integer"* ]]
+}
+
+@test "audit clears inherited usage_* values when flags are omitted" {
+  seed_corpus
+  export usage_dir="missing"
+  export usage_top="1"
+  export usage_json="true"
+
+  run notes audit
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Scanned 5 note(s)"* ]]
+  [[ "$output" == *"Top 10 by inbound links:"* ]]
+  [[ "$output" != "{"* ]]
 }
 
 @test "audit errors when notes directory is missing" {
