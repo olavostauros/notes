@@ -1,13 +1,37 @@
 #!/usr/bin/env bash
 #MISE description="Run test suite"
 #MISE hide=true
-#USAGE arg "[args...]" help="Test files or bats flags (e.g., test/obfuscate.bats, --filter 'pattern')"
-set -eo pipefail
+#USAGE arg "[args]" var=#true default="" help="Test files or bats flags (e.g., test/obfuscate.bats, --filter 'pattern')"
+#USAGE example "mise run test" header="Run all tests"
+#USAGE example "mise run test list" header="Run test/list.bats"
+#USAGE example "mise run test --filter rejects" header="Filter tests by name"
+set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_DIR="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"
+TEST_DIR="$REPO_DIR/test"
 
-if [ $# -gt 0 ]; then
-  exec bats "$@"
+args=()
+if [ -n "${usage_args:-}" ]; then
+  while IFS= read -r arg; do
+    [ -z "$arg" ] && continue
+    args+=("$arg")
+  done < <(printf '%s' "${usage_args}" | xargs printf '%s\n')
 fi
 
-exec bats --jobs 8 --parallel-binary-name rush "$REPO_DIR/test/"
+resolved=()
+has_target=false
+for arg in ${args[@]+"${args[@]}"}; do
+  if [[ "$arg" != -* && "$arg" != *.bats && -f "$TEST_DIR/$arg.bats" ]]; then
+    resolved+=("$TEST_DIR/$arg.bats")
+    has_target=true
+  else
+    [[ "$arg" == *.bats || -d "$arg" ]] && has_target=true
+    resolved+=("$arg")
+  fi
+done
+
+if ! $has_target; then
+  resolved+=("$TEST_DIR/")
+fi
+
+exec bats --jobs 8 --parallel-binary-name rush ${resolved[@]+"${resolved[@]}"}

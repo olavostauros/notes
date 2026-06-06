@@ -8,9 +8,9 @@
 #   - hooks.sh     — git hook installation
 
 # Prefer the notes-specific caller dir to avoid inheriting stale generic
-# caller context from another shiv-managed tool. CALLER_PWD remains a
-# temporary migration fallback for older shims/callers.
-TARGET_DIR="${NOTES_CALLER_PWD:-${CALLER_PWD:-.}}"
+# caller context from another shiv-managed tool. Direct repo-local task runs
+# fall back to the current working directory.
+TARGET_DIR="${NOTES_CALLER_PWD:-.}"
 
 NOTES_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTES_REPO_DIR="$(cd "$NOTES_LIB_DIR/.." && pwd)"
@@ -34,6 +34,14 @@ require_rudi() {
 
 is_initialized() {
   [ -d "$TARGET_DIR/.git-crypt" ] || [ -d "$TARGET_DIR/.git/git-crypt" ]
+}
+
+# Return success when rudi reports TARGET_DIR is unlocked.
+# On rudi/jq failure, return false so callers surface the real unlock error.
+encryption_unlocked() {
+  local unlocked
+  unlocked=$(rudi status --json 2>/dev/null | jq -r '.unlocked' 2>/dev/null) || return 1
+  [ "$unlocked" = "true" ]
 }
 
 require_initialized() {

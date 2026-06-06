@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Install git hooks for obfuscation (pre-commit, post-commit, post-merge)"
-#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
-set -eo pipefail
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 source "$MISE_CONFIG_ROOT/lib/hooks.sh"
@@ -26,4 +26,5 @@ echo "  pre-commit.d/encryption — rejects plaintext staged encrypted files"
 echo "  pre-commit.d/obfuscation — auto-obfuscates staged readable names"
 echo "  post-commit.d/deobfuscation — restores readable names after commit"
 echo "  post-merge.d/deobfuscation — restores readable names after pull"
+echo "  post-checkout.d/deobfuscation — reconciles readable names after branch checkout"
 echo "  merge driver — auto-merges .manifest on pull/merge/rebase"

@@ -83,6 +83,30 @@ generate_test_key() {
   grep -q "secret content" "$TARGET_DIR/notes/secret.md"
 }
 
+@test "unlock no-ops when already unlocked, even with a dirty tree (#42)" {
+  notes setup --yes
+
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  # Tracked dirty readable file reproduces git-crypt's unlock guard; see #42.
+  mkdir -p "$TARGET_DIR/notes"
+  echo "original" > "$TARGET_DIR/notes/secret.md"
+  git -C "$TARGET_DIR" add notes/secret.md
+  git -C "$TARGET_DIR" commit -q --no-verify -m "Add readable note"
+  echo "local edit" >> "$TARGET_DIR/notes/secret.md"
+
+  [ -n "$(git -C "$TARGET_DIR" status --porcelain)" ]
+
+  run notes unlock
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Already unlocked."* ]]
+
+  # Local edit survives the no-op.
+  grep -q "local edit" "$TARGET_DIR/notes/secret.md"
+}
+
 @test "lock refuses without confirmation before staging or obfuscating" {
   notes setup --yes
 

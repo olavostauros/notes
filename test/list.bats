@@ -110,6 +110,57 @@ EOF
   echo "$output" | python3 -c "import sys, json; data = json.load(sys.stdin); assert len(data) == 1; assert data[0]['title'] == 'Block Tag Note'"
 }
 
+@test "list --type filters by frontmatter type" {
+  cat > "$NOTES_CALLER_PWD/notes/skill.md" <<'EOF'
+---
+title: Skill Note
+type: skill
+status: candidate
+tags: [skill, testing]
+created: 2026-01-01
+updated: 2026-01-03
+---
+
+# Skill Note
+EOF
+  notes new --slug pattern --title "Pattern Note" --tags "testing" --updated "2026-01-04"
+
+  run notes list --json --type skill
+  [ "$status" -eq 0 ]
+  echo "$output" | python3 -c "import sys, json; data = json.load(sys.stdin); assert len(data) == 1; assert data[0]['title'] == 'Skill Note'; assert data[0]['type'] == 'skill'"
+}
+
+@test "list --status filters by frontmatter status" {
+  cat > "$NOTES_CALLER_PWD/notes/candidate.md" <<'EOF'
+---
+title: Candidate Note
+type: skill
+status: candidate
+tags: [skill]
+created: 2026-01-01
+updated: 2026-01-03
+---
+
+# Candidate Note
+EOF
+  cat > "$NOTES_CALLER_PWD/notes/accepted.md" <<'EOF'
+---
+title: Accepted Note
+type: skill
+status: accepted
+tags: [skill]
+created: 2026-01-01
+updated: 2026-01-04
+---
+
+# Accepted Note
+EOF
+
+  run notes list --json --status candidate
+  [ "$status" -eq 0 ]
+  echo "$output" | python3 -c "import sys, json; data = json.load(sys.stdin); assert len(data) == 1; assert data[0]['title'] == 'Candidate Note'; assert data[0]['status'] == 'candidate'"
+}
+
 @test "list empty directory shows no notes" {
   run notes list
   [ "$status" -eq 0 ]

@@ -20,6 +20,16 @@ if [ -f "$NOTES_ROOT/.manifest" ]; then
   # Run the notes package version that installed this hook, not whichever
   # `notes` command happens to appear first on PATH. Suppress stdout (rename
   # output) but let stderr through so dirty-readable refusals and hard failures
-  # are visible to the user/agent.
-  run_notes deobfuscate >/dev/null
+  # are visible to the user/agent. ORIG_HEAD lets deobfuscate prove a missing
+  # state-row readable is clean stale pre-merge content before refreshing it.
+  if NOTES_DEOBFUSCATE_BASE_REF=ORIG_HEAD run_notes deobfuscate >/dev/null; then
+    :
+  else
+    rc=$?
+    cat >&2 <<EOF
+Warning: git completed, but notes deobfuscation is incomplete.
+Run 'notes status' to see conflicts, and 'notes changes <file>' before staging.
+EOF
+    exit "$rc"
+  fi
 fi

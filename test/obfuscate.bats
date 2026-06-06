@@ -368,6 +368,20 @@ setup() {
   [ -f "$NOTES_CALLER_PWD/notes/$id" ]
 }
 
+@test "deobfuscate ignores inherited usage_files without explicit IDs" {
+  notes obfuscate
+  local alpha_id beta_id gamma_id
+  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  beta_id=$(grep "beta.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  gamma_id=$(grep "gamma.txt" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+
+  usage_files="$alpha_id" run notes deobfuscate -- --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$alpha_id → alpha.md"* ]]
+  [[ "$output" == *"$beta_id → beta.md"* ]]
+  [[ "$output" == *"$gamma_id → gamma.txt"* ]]
+}
+
 @test "round-trip preserves all content and metadata" {
   notes obfuscate
   notes deobfuscate
@@ -811,6 +825,7 @@ EOT
   grep -q "Generic hook dispatcher" "$NOTES_CALLER_PWD/.git/hooks/post-merge"
   [ -x "$NOTES_CALLER_PWD/.git/hooks/post-merge.d/deobfuscation" ]
   grep -q "manifest" "$NOTES_CALLER_PWD/.git/hooks/post-merge.d/deobfuscation"
+  grep -q "NOTES_DEOBFUSCATE_BASE_REF=ORIG_HEAD" "$NOTES_CALLER_PWD/.git/hooks/post-merge.d/deobfuscation"
 }
 
 # --- Scoped obfuscation (variadic args) ---
@@ -984,6 +999,37 @@ EOT
   [ -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
 }
 
+@test "deobfuscate refreshes clean stale readable when state row is missing but base ref matches" {
+  notes obfuscate
+  local alpha_id base_ref state
+  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  git -C "$NOTES_CALLER_PWD" add -A notes
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate v1"
+  base_ref=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
+
+  notes deobfuscate
+  state="$NOTES_CALLER_PWD/.git/info/notes-obfuscation-state"
+  [ -f "$state" ]
+
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  notes obfuscate alpha.md
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate v2"
+
+  # Simulate a partial/old state file after pull: alpha.md is still the clean
+  # pre-merge readable, the new obfuscated source is present, but alpha's state
+  # row is missing. ORIG_HEAD/base-ref should prove the readable is safe to
+  # refresh instead of treating it as a local edit.
+  git -C "$NOTES_CALLER_PWD" cat-file --filters "$base_ref:notes/$alpha_id" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  grep -v "^${alpha_id}"$'\t' "$state" > "$state.tmp"
+  mv "$state.tmp" "$state"
+
+  NOTES_DEOBFUSCATE_BASE_REF="$base_ref" run notes deobfuscate
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"# Alpha v2"* ]]
+  [ ! -f "$NOTES_CALLER_PWD/notes/$alpha_id" ]
+  grep -q "^${alpha_id}"$'\t' "$state"
+}
+
 @test "deobfuscate --force intentionally overwrites dirty readable note" {
   notes obfuscate
   local alpha_id
@@ -998,6 +1044,24 @@ EOT
   [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
   [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"# Alpha"* ]]
   [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" != *"local edit"* ]]
+}
+
+@test "deobfuscate ignores inherited usage_force without explicit --force" {
+  notes obfuscate
+  local alpha_id
+  alpha_id=$(grep "alpha.md" "$NOTES_CALLER_PWD/notes/.manifest" | cut -f1)
+  git -C "$NOTES_CALLER_PWD" add -A notes
+  git -C "$NOTES_CALLER_PWD" commit -q -m "obfuscate"
+
+  notes deobfuscate
+  echo "local edit" >> "$NOTES_CALLER_PWD/notes/alpha.md"
+  git -C "$NOTES_CALLER_PWD" update-index --no-assume-unchanged "notes/$alpha_id" 2>/dev/null || true
+  git -C "$NOTES_CALLER_PWD" checkout -- "notes/$alpha_id"
+
+  usage_force=true run notes deobfuscate
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to overwrite dirty readable note"* ]]
+  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"local edit"* ]]
 }
 
 @test "deobfuscate allows identical readable note copy" {

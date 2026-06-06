@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 #MISE description="List notes with metadata"
-#USAGE flag "--json" help="Output as JSON array"
-#USAGE flag "--recent <n>" help="Show N most recently updated notes"
-#USAGE flag "--tag <tag>" help="Filter by tag"
-#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
-set -eo pipefail
+#USAGE flag "--json" help="Output as JSON array" default=#false
+#USAGE flag "--recent <n>" help="Show N most recently updated notes" default=""
+#USAGE flag "--tag <tag>" help="Filter by tag" default=""
+#USAGE flag "--type <type>" help="Filter by frontmatter type" default=""
+#USAGE flag "--status <status>" help="Filter by frontmatter status" default=""
+#USAGE flag "--dir <dir>" help="Notes directory relative to repo root" default="notes"
+set -euo pipefail
 
-TARGET_DIR="${NOTES_CALLER_PWD:-${CALLER_PWD:-.}}"
+REPO_DIR="${MISE_CONFIG_ROOT:?MISE_CONFIG_ROOT not set}"
+TARGET_DIR="${NOTES_CALLER_PWD:-.}"
 notes_dir="$TARGET_DIR/${usage_dir:-notes}"
 
 if [ ! -d "$notes_dir" ]; then
@@ -14,113 +17,59 @@ if [ ! -d "$notes_dir" ]; then
   exit 1
 fi
 
-python3 - "$notes_dir" "${usage_json:-false}" "${usage_recent:-}" "${usage_tag:-}" <<'PY'
+python3 - "$REPO_DIR" "$notes_dir" "${usage_json:-false}" "${usage_recent:-}" "${usage_tag:-}" "${usage_type:-}" "${usage_status:-}" <<'PY'
 import json
+import subprocess
 import sys
 from pathlib import Path
 
-notes_dir = Path(sys.argv[1])
-json_output = sys.argv[2] == "true"
-recent = sys.argv[3]
-tag_filter = sys.argv[4]
+repo_dir = Path(sys.argv[1])
+notes_dir = Path(sys.argv[2])
+json_output = sys.argv[3] == "true"
+recent = sys.argv[4]
+tag_filter = sys.argv[5]
+type_filter = sys.argv[6]
+status_filter = sys.argv[7]
 
+sys.path.insert(0, str(repo_dir / "lib"))
+from frontmatter import filter_notes, iter_notes  # noqa: E402
 
-def parse_scalar(value: str) -> str:
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-        return value[1:-1]
-    return value
-
-
-def parse_list(value: str):
-    value = value.strip()
-    if not value:
-        return []
-    if value.startswith("[") and value.endswith("]"):
-        inner = value[1:-1].strip()
-        if not inner:
-            return []
-        return [parse_scalar(part) for part in inner.split(",") if parse_scalar(part)]
-    return [parse_scalar(value)]
-
-
-def parse_frontmatter(path: Path):
-    try:
-        text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return None
-    if not text.startswith("---\n"):
-        return None
-    end = text.find("\n---", 4)
-    if end == -1:
-        return None
-
-    data = {}
-    current_list_key = None
-    for line in text[4:end].splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-
-        if current_list_key and line.startswith((" ", "\t")) and stripped.startswith("-"):
-            item = stripped[1:].strip()
-            if item:
-                data[current_list_key].append(parse_scalar(item))
-            continue
-
-        current_list_key = None
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        key = key.strip()
-        value = value.strip()
-        if key in {"tags", "related"}:
-            data[key] = parse_list(value)
-            if not value:
-                current_list_key = key
-        else:
-            data[key] = parse_scalar(value)
-    return data
-
-
-rows = []
-for path in sorted(notes_dir.glob("*.md")):
-    meta = parse_frontmatter(path)
-    if not meta:
-        continue
-    title = str(meta.get("title", "")).strip()
-    if not title:
-        continue
-    tags = meta.get("tags", [])
-    if not isinstance(tags, list):
-        tags = []
-    if tag_filter and tag_filter not in tags:
-        continue
-    date = str(meta.get("updated") or meta.get("created") or "")
-    rows.append({
-        "title": title,
-        "tags": tags,
-        "date": date,
-        "slug": path.stem,
-        "path": str(path),
-    })
+rows = [
+    note.row()
+    for note in filter_notes(
+        iter_notes(notes_dir),
+        tag=tag_filter,
+        note_type=type_filter,
+        status=status_filter,
+    )
+]
 
 rows.sort(key=lambda row: row["date"], reverse=True)
 if recent:
-    rows = rows[: int(recent)]
+    try:
+        rows = rows[: int(recent)]
+    except ValueError:
+        print(f"Error: --recent must be an integer: {recent}", file=sys.stderr)
+        sys.exit(1)
 
 if json_output:
     print(json.dumps(rows, indent=2, ensure_ascii=False))
 elif not rows:
+    filters = []
     if tag_filter:
-        print(f"No notes found with tag: {tag_filter}")
+        filters.append(f"tag={tag_filter}")
+    if type_filter:
+        filters.append(f"type={type_filter}")
+    if status_filter:
+        filters.append(f"status={status_filter}")
+    if filters:
+        print(f"No notes found with {' '.join(filters)}")
     else:
         print("No notes found.")
 else:
-    table = "Title\tTags\tUpdated\n" + "\n".join(
-        f"{row['title']}\t{', '.join(row['tags'])}\t{row['date']}" for row in rows
+    table = "Title\tType\tStatus\tTags\tUpdated\n" + "\n".join(
+        f"{row['title']}\t{row['type']}\t{row['status']}\t{', '.join(row['tags'])}\t{row['date']}" for row in rows
     )
-    import subprocess
     subprocess.run(
         ["gum", "table", "--print", "--separator", "\t"],
         input=table,

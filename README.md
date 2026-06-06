@@ -15,8 +15,10 @@ notes setup --yes
 # Add a note with YAML frontmatter.
 notes new --slug project-plan --title "Project plan" --tags planning
 
-# See note metadata.
+# See note metadata, search notes, and show one note.
 notes list
+notes search "workflow"
+notes show project-plan
 
 # Check encryption + obfuscation state.
 notes status
@@ -39,6 +41,20 @@ notes status
 notes changes
 notes changes --summary
 
+# Query notes by metadata or content.
+notes list --type skill
+notes search "review capacity" --tag workflow
+notes show project-plan --json
+
+# Show readable diffs for local changes, refs, or PRs.
+notes diff
+notes diff main...HEAD
+notes diff --pr 109 --out /tmp/notes-109-review
+
+# Inspect unresolved encrypted-note merge conflicts without resolving them.
+notes conflicts --out /tmp/notes-conflicts
+notes merge --dry-run --out /tmp/notes-conflicts
+
 # Stage modified/deleted notes. New notes should be explicit.
 notes stage
 notes stage notes/new-note.md
@@ -59,6 +75,8 @@ notes unlock
 - **Filename obfuscation** — stores notes with opaque filenames in Git while restoring readable names locally.
 - **Manifest merging** — uses a custom merge driver for `notes/.manifest` so concurrent note additions can merge cleanly.
 - **Safe staging** — stages notes despite local exclude/assume-unchanged rules used for readable working copies.
+- **Readable review diffs** — materializes obfuscated note refs/PRs as readable Markdown and emits a normal patch.
+- **Readable conflict artifacts** — detects unmerged encrypted/obfuscated note content and writes base/ours/theirs Markdown files for manual resolution.
 - **Wikilink graph telemetry** — `notes audit` reports inbound/outbound link counts per note and surfaces broken `[[targets]]`. Generic; layered analyses (e.g. pattern maturity) consume the `--json` output.
 
 ## Important gotchas
@@ -66,6 +84,7 @@ notes unlock
 - `notes lock` currently re-encrypts **all git-crypt files in the repo**, not just `notes/` files. This is a `rudi` limitation tracked separately.
 - Use `notes stage` for notes, not raw `git add notes/`; readable note names are intentionally excluded locally.
 - After pulling shared note repos, inspect `notes status` and `notes changes --summary` before committing follow-up changes.
+- `notes unlock` / `notes deobfuscate` reconcile stale readable files left by upstream note deletion or rename. Clean generated stale files are removed; dirty or unproven stale files are moved to `.git/info/notes-stale-readable/` so they cannot be accidentally staged as new notes.
 
 ## Development
 

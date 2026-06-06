@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#MISE description="Custom git merge driver for notes .manifest (invoked by git, not users)"
+#MISE hide=true
+#USAGE arg "<ancestor>" help="Common ancestor file (%O)"
+#USAGE arg "<current>" help="Current branch file (%A) — written in place"
+#USAGE arg "<other>" help="Other branch file (%B)"
+set -euo pipefail
+
+# Git passes %O/%A/%B relative to the merge worktree. The shiv shim runs this
+# task from the installed notes package, so return to the caller's worktree
+# before handing those relative paths to the real driver.
+#
+# Missing caller context is unsafe: using the package directory would make the
+# merge inputs point nowhere. Fail loudly rather than risk corrupting .manifest.
+CALLER_DIR="${NOTES_CALLER_PWD:-${CALLER_PWD:-}}"
+if [ -z "$CALLER_DIR" ]; then
+  echo "notes merge-driver: NOTES_CALLER_PWD is not set." >&2
+  echo "  This task must be invoked via the notes shim (which exports NOTES_CALLER_PWD)." >&2
+  echo "  Aborting to avoid producing a corrupt manifest from unresolved relative paths." >&2
+  exit 1
+fi
+cd "$CALLER_DIR"
+exec bash "$MISE_CONFIG_ROOT/lib/manifest-merge-driver.sh" \
+  "${usage_ancestor}" "${usage_current}" "${usage_other}"

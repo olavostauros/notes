@@ -13,6 +13,14 @@ assert_gitcrypt_blob() {
   [ "$header" = "GITCRYPT" ] || fail "expected encrypted blob at $ref_path"
 }
 
+# The installed config resolves via the notes shim. The test harness uses the
+# in-tree script so git can exercise the same merge logic without an installed
+# package shim.
+_use_local_merge_driver() {
+  git -C "$1" config merge.manifest.driver \
+    "bash $REPO_DIR/lib/manifest-merge-driver.sh %O %A %B"
+}
+
 # Override default setup — we need a remote + local pair, not a single repo.
 setup() {
   source "$REPO_DIR/lib/common.sh"
@@ -54,6 +62,7 @@ setup() {
   export NOTES_CALLER_PWD="$LOCAL"
   notes deobfuscate
   notes install-hooks
+  _use_local_merge_driver "$LOCAL"
 }
 
 # ── Pull ──────────────────────────────────────────────────────
@@ -158,7 +167,46 @@ setup() {
   [ ! -f "$LOCAL/notes/$beta_id" ]
 
   [[ "$output" == *"refusing to overwrite dirty readable note: alpha.md"* ]]
+  [[ "$output" == *"git completed, but notes deobfuscation is incomplete"* ]]
   [[ "$output" == *"post-merge hook failed"* ]]
+
+  NOTES_CALLER_PWD="$LOCAL" run notes status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Incomplete deobfuscation"* ]]
+  [[ "$output" == *"alpha.md"* ]]
+
+  NOTES_CALLER_PWD="$LOCAL" run notes stage alpha.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"incomplete deobfuscation"* ]]
+  [[ "$output" == *"notes changes alpha.md"* ]]
+}
+
+# ── Checkout ──────────────────────────────────────────────────
+
+@test "checkout: post-checkout hook reconciles deleted readable note" {
+  local beta_id
+  beta_id=$(grep "beta.md" "$LOCAL/notes/.manifest" | cut -f1)
+  [ -f "$LOCAL/notes/beta.md" ]
+
+  git -C "$LOCAL" checkout -q -b delete-beta
+  git -C "$LOCAL" update-index --no-assume-unchanged "notes/$beta_id" 2>/dev/null || true
+  git -C "$LOCAL" rm -q --cached "notes/$beta_id"
+  grep -v $'\tbeta.md$' "$LOCAL/notes/.manifest" > "$LOCAL/notes/.manifest.tmp"
+  mv "$LOCAL/notes/.manifest.tmp" "$LOCAL/notes/.manifest"
+  git -C "$LOCAL" add notes/.manifest
+  git -C "$LOCAL" commit -q --no-verify -m "delete beta"
+  [ ! -f "$LOCAL/notes/beta.md" ]
+
+  git -C "$LOCAL" checkout -q main
+  [ -f "$LOCAL/notes/beta.md" ]
+
+  git -C "$LOCAL" checkout -q delete-beta
+  [ ! -f "$LOCAL/notes/beta.md" ]
+  ! grep -q "notes/beta.md" "$LOCAL/.git/info/exclude"
+
+  NOTES_CALLER_PWD="$LOCAL" run notes changes --summary
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No changes."* ]]
 }
 
 # ── Merge ─────────────────────────────────────────────────────
@@ -229,6 +277,10 @@ setup() {
   echo "branch-a edit" >> "$LOCAL/notes/$alpha_id"
   git -C "$LOCAL" add "notes/$alpha_id"
   git -C "$LOCAL" commit -q --no-verify -m "branch-a edits alpha"
+
+  # Post-commit deobfuscates; return to obfuscated state for this low-level
+  # conflict test before switching branches.
+  NOTES_CALLER_PWD="$LOCAL" notes obfuscate
 
   # Back to main, edit alpha differently
   git -C "$LOCAL" checkout -q main
@@ -321,6 +373,7 @@ EOT
   git -C "$repo" commit -q -m "init"
 
   NOTES_CALLER_PWD="$repo" notes install-hooks >/dev/null
+  _use_local_merge_driver "$repo"
 
   git -C "$repo" switch -q -c feature
   cat > "$repo/notes/.manifest" <<'EOT'

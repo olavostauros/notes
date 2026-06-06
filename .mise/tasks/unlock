@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Unlock encrypted files using your GPG key"
-#USAGE flag "--force" help="Overwrite existing readable note files during deobfuscation"
-set -eo pipefail
+#USAGE flag "--force" default=#false help="Overwrite existing readable note files during deobfuscation"
+set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 require_git
@@ -9,17 +9,21 @@ require_initialized
 require_rudi
 
 cd "$TARGET_DIR"
-rudi unlock
 
-# Known limitation: rudi unlock decrypts ALL git-crypt-encrypted files,
-# not just notes. This also decrypts the modules manifest and anything
-# else using git-crypt in this repo. Tracked in KnickKnackLabs/rudi#5.
-echo "Note: unlock decrypts all encrypted files in this repo (rudi#5)."
+# Skip the mutating unlock path when rudi already reports unlocked; see #42.
+# The real locked→unlocked path still relies on rudi/git-crypt guards.
+if encryption_unlocked; then
+  echo "Already unlocked."
+else
+  rudi unlock
+  # rudi unlock decrypts all git-crypt files in the repo; see rudi#5.
+  echo "Note: unlock decrypts all encrypted files in this repo (rudi#5)."
+fi
 
 # Deobfuscate filenames if a manifest exists
 if [ -f "$TARGET_DIR/notes/.manifest" ]; then
   if [ "${usage_force:-false}" = "true" ]; then
-    cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate -- --force
+    cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate --force
   else
     cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate
   fi

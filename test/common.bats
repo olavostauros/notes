@@ -43,21 +43,22 @@ EOF
   [[ "$output" != *"Wrong Repo"* ]]
 }
 
-@test "legacy CALLER_PWD fallback still resolves target repo" {
-  local legacy="$BATS_TEST_TMPDIR/legacy-repo"
-  mkdir -p "$legacy/notes"
-  cat > "$legacy/notes/legacy.md" <<'EOF'
+@test "generic CALLER_PWD is ignored to avoid stale caller context" {
+  local stale="$BATS_TEST_TMPDIR/stale-repo"
+  mkdir -p "$stale/notes"
+  cat > "$stale/notes/stale.md" <<'EOF'
 ---
-title: Legacy Repo
+title: Stale Repo
 tags: []
 ---
 EOF
 
   unset NOTES_CALLER_PWD
-  run bash -c 'cd "$REPO_DIR" && CALLER_PWD="$1" mise run -q list --json' _ "$legacy"
+  run bash -c 'cd "$REPO_DIR" && CALLER_PWD="$1" mise run -q list --json' _ "$stale"
 
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Legacy Repo"* ]]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"notes directory not found"* ]]
+  [[ "$output" != *"Stale Repo"* ]]
 }
 
 # ── Confirmation helpers ─────────────────────────────────────

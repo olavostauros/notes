@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 #MISE description="Show changed notes (diffs against last commit)"
-#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
-#USAGE flag "--summary" help="Show only the change summary (modified/new/deleted), no diffs"
-#USAGE arg "[files]..." help="Specific notes to check (readable names, relative to notes dir). Omit for all."
-set -eo pipefail
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+#USAGE flag "--summary" default=#false help="Show only the change summary (modified/new/deleted), no diffs"
+#USAGE arg "[files]" var=#true default="" help="Specific notes to check (readable names, relative to notes dir). Omit for all."
+set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
+source "$MISE_CONFIG_ROOT/lib/suppress.sh"
 source "$MISE_CONFIG_ROOT/lib/changes.sh"
 require_git
 
@@ -23,6 +25,7 @@ ARGS=()
 if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
     arg="${arg#"${notes_dir}/"}"
+    [ -z "$arg" ] && continue
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
 fi
@@ -37,29 +40,30 @@ if [ "${usage_summary:-}" = "true" ]; then
   fi
 
   # Apply file filter if specified
-  modified=0 new=0 deleted=0
+  modified=0 new=0 deleted=0 stale=0
   while IFS=$'\t' read -r status relpath; do
     if [ ${#ARGS[@]} -gt 0 ] && [ -n "${ARGS[0]}" ]; then
       match=false
-      for f in "${ARGS[@]}"; do
+      for f in ${ARGS[@]+"${ARGS[@]}"}; do
         [ "$f" = "$relpath" ] && match=true && break
       done
       $match || continue
     fi
 
     case "$status" in
-      modified) echo "  modified:  $relpath"; ((modified++)) || true ;;
-      new)      echo "  new:       $relpath"; ((new++)) || true ;;
-      deleted)  echo "  deleted:   $relpath"; ((deleted++)) || true ;;
+      modified)       echo "  modified:  $relpath"; ((modified++)) || true ;;
+      new)            echo "  new:       $relpath"; ((new++)) || true ;;
+      deleted)        echo "  deleted:   $relpath"; ((deleted++)) || true ;;
+      stale-readable) echo "  stale-readable: $relpath"; ((stale++)) || true ;;
     esac
   done <<< "$changes"
 
-  total=$((modified + new + deleted))
+  total=$((modified + new + deleted + stale))
   if [ "$total" -eq 0 ]; then
     echo "No changes."
   else
     echo ""
-    echo "$total change(s): $modified modified, $new new, $deleted deleted"
+    echo "$total change(s): $modified modified, $new new, $deleted deleted, $stale stale-readable"
   fi
 else
   # Diff mode: show full diffs
@@ -70,5 +74,5 @@ else
     exit 0
   fi
 
-  show_diffs "$abs_notes_dir" "${ARGS[@]}"
+  show_diffs "$abs_notes_dir" ${ARGS[@]+"${ARGS[@]}"}
 fi

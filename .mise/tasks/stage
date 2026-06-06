@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 #MISE description="Stage notes for commit (bypasses exclude)"
-#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
-#USAGE flag "--dry-run" help="Show what would be staged without doing it"
-#USAGE arg "[files]..." help="Specific notes to stage (readable names, relative to notes dir). Omit to stage modified/deleted only; new notes require explicit files."
-set -eo pipefail
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--dry-run" default=#false help="Show what would be staged without doing it"
+#USAGE arg "[files]" var=#true default="" help="Specific notes to stage (readable names, relative to notes dir). Omit to stage modified/deleted only; new notes require explicit files."
+set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
+source "$MISE_CONFIG_ROOT/lib/suppress.sh"
 source "$MISE_CONFIG_ROOT/lib/changes.sh"
 require_git
 
@@ -23,6 +25,8 @@ ARGS=()
 if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
     arg="${arg#"${notes_dir}/"}"
+    # Skip empty variadic defaults after xargs unquotes "''".
+    [ -z "$arg" ] && continue
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
 fi
@@ -46,12 +50,67 @@ fi
 
 to_stage=()
 skipped_new=()
+stale_notes=()
+
+while IFS=$'\t' read -r status relpath; do
+  [ "$status" = "stale-readable" ] || continue
+  if $explicit_files; then
+    match=false
+    for f in ${ARGS[@]+"${ARGS[@]}"}; do
+      [ "$f" = "$relpath" ] && match=true && break
+    done
+    $match || continue
+  fi
+  stale_notes+=("$relpath")
+done <<< "$changes"
+
+if [ ${#stale_notes[@]} -gt 0 ]; then
+  echo "Error: stale readable note(s) detected; refusing to stage." >&2
+  echo "These files belonged to a previous manifest state and may reintroduce deleted/renamed notes:" >&2
+  for relpath in ${stale_notes[@]+"${stale_notes[@]}"}; do
+    echo "  $relpath" >&2
+  done
+  echo "Run 'notes deobfuscate' to remove clean stale files or quarantine dirty ones, then retry." >&2
+  exit 1
+fi
+
+conflicting_notes=$(detect_dual_present_conflicts "$abs_notes_dir") || true
+if [ -n "$conflicting_notes" ]; then
+  blocked_conflicts=()
+  while IFS=$'\t' read -r conflict_id conflict_relpath; do
+    [ -z "$conflict_id" ] && continue
+    if $explicit_files; then
+      match=false
+      for f in ${ARGS[@]+"${ARGS[@]}"}; do
+        [ "$f" = "$conflict_relpath" ] && match=true && break
+      done
+      $match || continue
+    fi
+    blocked_conflicts+=("$conflict_id"$'\t'"$conflict_relpath")
+  done <<< "$conflicting_notes"
+
+  if [ ${#blocked_conflicts[@]} -gt 0 ]; then
+    echo "Error: incomplete deobfuscation detected; refusing to stage conflicting note(s)." >&2
+    echo "A readable note and its obfuscated source both exist with different content:" >&2
+    for conflict in "${blocked_conflicts[@]}"; do
+      IFS=$'\t' read -r conflict_id conflict_relpath <<< "$conflict"
+      echo "  $conflict_relpath (also present as $notes_dir/$conflict_id)" >&2
+    done
+    echo "" >&2
+    echo "Run 'notes deobfuscate' after resolving local edits, or inspect with:" >&2
+    for conflict in "${blocked_conflicts[@]}"; do
+      IFS=$'\t' read -r _conflict_id conflict_relpath <<< "$conflict"
+      echo "  notes changes $conflict_relpath" >&2
+    done
+    exit 1
+  fi
+fi
 
 print_skipped_new() {
   [ ${#skipped_new[@]} -eq 0 ] && return 0
 
   echo "Skipped ${#skipped_new[@]} new note(s). Stage explicitly with: notes stage <file>"
-  for relpath in "${skipped_new[@]}"; do
+  for relpath in ${skipped_new[@]+"${skipped_new[@]}"}; do
     echo "  new: $relpath"
   done
 }
@@ -59,7 +118,7 @@ print_skipped_new() {
 while IFS=$'\t' read -r status relpath; do
   if $explicit_files; then
     match=false
-    for f in "${ARGS[@]}"; do
+    for f in ${ARGS[@]+"${ARGS[@]}"}; do
       [ "$f" = "$relpath" ] && match=true && break
     done
     $match || continue
@@ -80,6 +139,9 @@ while IFS=$'\t' read -r status relpath; do
       # For deleted notes, we need to remove the obfuscated file from the index
       to_stage+=("$relpath")
       ;;
+    stale-readable)
+      # Handled above so staging never accidentally adopts stale generated files.
+      ;;
   esac
 done <<< "$changes"
 
@@ -91,7 +153,7 @@ fi
 
 if [ "${usage_dry_run:-}" = "true" ]; then
   echo "Would stage:"
-  for relpath in "${to_stage[@]}"; do
+  for relpath in ${to_stage[@]+"${to_stage[@]}"}; do
     echo "  $relpath"
   done
   print_skipped_new
@@ -100,7 +162,7 @@ fi
 
 # Stage each file using git add -f to bypass .git/info/exclude
 staged=0
-for relpath in "${to_stage[@]}"; do
+for relpath in ${to_stage[@]+"${to_stage[@]}"}; do
   local_file="$abs_notes_dir/$relpath"
 
   if [ -f "$local_file" ]; then
@@ -111,7 +173,25 @@ for relpath in "${to_stage[@]}"; do
     # Deleted: remove the obfuscated ID from the index
     id=$(manifest_id_for_name "$manifest" "$relpath")
     if [ -n "$id" ]; then
-      git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$id" 2>/dev/null || true
+      # First remove the tracked blob when it is still present in the index.
+      # If the index cannot be updated (for example, an index lock exists),
+      # fail before mutating the working manifest. If a previous interrupted
+      # run already staged/removed the blob, keep going and only stage the
+      # manifest repair.
+      if git -C "$TARGET_DIR" ls-files --error-unmatch -- "$notes_dir/$id" >/dev/null 2>&1; then
+        git -C "$TARGET_DIR" rm --cached --quiet "$notes_dir/$id"
+      fi
+
+      tmp_manifest=$(mktemp) || exit 1
+      manifest_backup=$(mktemp) || exit 1
+      cp "$manifest" "$manifest_backup"
+      awk -F '\t' -v path="$relpath" '$2 != path { print $0 }' "$manifest" > "$tmp_manifest"
+      mv -f "$tmp_manifest" "$manifest"
+      if ! git -C "$TARGET_DIR" add -f "$notes_dir/.manifest"; then
+        mv -f "$manifest_backup" "$manifest"
+        exit 1
+      fi
+      rm -f "$manifest_backup"
       echo "  staged (delete): $relpath"
     fi
   fi

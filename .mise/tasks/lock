@@ -2,7 +2,7 @@
 #MISE description="Lock encrypted files (re-encrypt on disk)"
 #USAGE flag "-y --yes" default=#false help="Skip confirmation prompt"
 #USAGE flag "-k --key <name>" default="" help="Lock only this named key's files (default: lock all)"
-set -eo pipefail
+set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 require_git
@@ -30,9 +30,9 @@ if [ -f "$TARGET_DIR/notes/.manifest" ]; then
 fi
 
 if [ -n "${usage_key:-}" ]; then
-  CALLER_PWD="$TARGET_DIR" rudi lock --key "$usage_key"
+  rudi lock --key "$usage_key"
 else
-  CALLER_PWD="$TARGET_DIR" rudi lock
+  rudi lock
   # Known limitation: rudi lock without --key locks ALL git-crypt-encrypted
   # files, not just notes. Tracked in KnickKnackLabs/rudi#5.
   echo "Note: lock re-encrypts all encrypted files in this repo (rudi#5)."

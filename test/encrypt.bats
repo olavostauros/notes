@@ -238,13 +238,10 @@ generate_test_key() {
 }
 
 @test "setup --unlock runs unlock after setup" {
-  # --unlock on a fresh repo (no GPG users) will fail at unlock
-  # because there's nothing to decrypt. But setup should complete
-  # and then attempt unlock.
+  # Fresh setup already owns the key, so --unlock should no-op cleanly; see #42.
   run notes setup --yes --unlock
-  # Verify setup completed before unlock was attempted
   echo "$output" | grep -q "Installed hooks"
   echo "$output" | grep -q "Unlocking"
-  # unlock fails on a repo with no GPG users — that's expected
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "Already unlocked."
 }

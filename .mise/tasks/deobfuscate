@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #MISE description="Restore obfuscated filenames to their original names"
-#USAGE flag "--dir <dir>" help="Notes directory relative to repo root (default: notes)"
-#USAGE flag "--dry-run" help="Show what would be renamed without doing it"
-#USAGE flag "--force" help="Overwrite existing readable files intentionally"
-#USAGE arg "[files]..." help="Specific obfuscated IDs to deobfuscate. Omit for all."
-set -eo pipefail
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--dry-run" default=#false help="Show what would be renamed without doing it"
+#USAGE flag "--force" default=#false help="Overwrite existing readable files intentionally"
+#USAGE arg "[files]" var=#true default="" help="Specific obfuscated IDs to deobfuscate. Omit for all."
+set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
 source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
@@ -26,6 +26,8 @@ if [ -n "${usage_files:-}" ]; then
   while IFS= read -r arg; do
     # Strip notes_dir prefix if provided (e.g. "notes/abc123" → "abc123")
     arg="${arg#"${notes_dir}/"}"
+    # Skip empty variadic defaults after xargs unquotes "''".
+    [ -z "$arg" ] && continue
     arg=$(basename "$arg")
     ARGS+=("$arg")
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
@@ -34,7 +36,7 @@ fi
 if [ "${usage_dry_run:-}" = "true" ]; then
   # Dry-run: just show what would be renamed
   if [ ${#ARGS[@]} -gt 0 ]; then
-    for id in "${ARGS[@]}"; do
+    for id in ${ARGS[@]+"${ARGS[@]}"}; do
       relpath=$(manifest_name_for_id "$manifest" "$id")
       if [ -z "$relpath" ]; then
         echo "Warning: unknown ID '$id', skipping" >&2
@@ -51,15 +53,27 @@ if [ "${usage_dry_run:-}" = "true" ]; then
   exit 0
 fi
 
-# Perform the rename via Layer 1
-# Exit codes: 0=success, 2=nothing to do, 1=error
+full_mode=true
+if [ ${#ARGS[@]} -gt 0 ] && [ -n "${ARGS[0]}" ]; then
+  full_mode=false
+fi
+
+# Reconcile stale readable files before restoring current manifest entries.
+# This handles upstream deletion/rename cleanly: old generated readables are
+# removed or quarantined before they can be mistaken for new notes.
+stale_output=""
+if $full_mode; then
+  stale_output=$(reconcile_stale_readable_notes "$abs_notes_dir") || {
+    echo "Error: failed to reconcile stale readable notes" >&2
+    exit 1
+  }
+fi
+
+# Perform the rename via Layer 1.
+# Exit codes: 0=success, 2=nothing to do, 3=dirty readable preserved, 1=error.
 # Use subshell to capture exit code without triggering errexit.
 export NOTES_DEOBFUSCATE_FORCE="${usage_force:-false}"
-output=$(rename_to_readable "$abs_notes_dir" "${ARGS[@]}") && rc=0 || rc=$?
-if [ $rc -eq 2 ]; then
-  echo "Nothing to deobfuscate."
-  exit 0
-fi
+output=$(rename_to_readable "$abs_notes_dir" ${ARGS[@]+"${ARGS[@]}"}) && rc=0 || rc=$?
 
 # Print what was renamed, collect IDs. Do this even on partial failure so
 # the state file stays consistent with disk; surface the rc afterwards.
@@ -74,11 +88,29 @@ if [ -n "$output" ]; then
   done <<< "$output"
 fi
 
+removed_stale=0
+quarantined_stale=0
+if [ -n "$stale_output" ]; then
+  while IFS=$'\t' read -r action relpath quarantine_path; do
+    [ -n "$action" ] || continue
+    case "$action" in
+      removed)
+        echo "  removed stale readable: $relpath" >&2
+        ((removed_stale++)) || true
+        ;;
+      quarantined)
+        echo "Warning: quarantined stale readable note: $relpath → $quarantine_path" >&2
+        ((quarantined_stale++)) || true
+        ;;
+    esac
+  done <<< "$stale_output"
+fi
+
 # Warn about unknown IDs in scoped mode (matches dry-run behavior)
 if [ ${#ARGS[@]} -gt 0 ]; then
-  for id in "${ARGS[@]}"; do
+  for id in ${ARGS[@]+"${ARGS[@]}"}; do
     found=false
-    for sid in "${suppressed_ids[@]}"; do
+    for sid in ${suppressed_ids[@]+"${suppressed_ids[@]}"}; do
       [ "$sid" = "$id" ] && found=true && break
     done
     if [ "$found" = false ]; then
@@ -87,22 +119,40 @@ if [ ${#ARGS[@]} -gt 0 ]; then
   done
 fi
 
+# Rebuild full suppression from current manifest after full deobfuscation. For
+# scoped calls, update only the restored IDs to preserve partial-deobfuscation
+# behavior.
+if $full_mode; then
+  rebuild_status_suppression "$abs_notes_dir" \
+    || echo "Warning: failed to rebuild status suppression" >&2
+elif [ ${#suppressed_ids[@]} -gt 0 ]; then
+  set_status_suppression "$abs_notes_dir" ${suppressed_ids[@]+"${suppressed_ids[@]}"} \
+    || echo "Warning: failed to update status suppression" >&2
+fi
+
 # Record state for what *did* succeed, even on partial failure. Tolerate
 # helper errors with `|| warn` so the original rename rc isn't masked under
 # `set -e`.
 if [ ${#suppressed_ids[@]} -gt 0 ]; then
-  set_status_suppression "$abs_notes_dir" "${suppressed_ids[@]}" \
-    || echo "Warning: failed to update status suppression" >&2
-  _record_deobfuscation_base_hashes "$abs_notes_dir" "${suppressed_ids[@]}" \
+  _record_deobfuscation_base_hashes "$abs_notes_dir" ${suppressed_ids[@]+"${suppressed_ids[@]}"} \
     || echo "Warning: failed to record deobfuscation base hashes" >&2
 fi
 
-if [ $rc -ne 0 ]; then
+if [ $rc -ne 0 ] && [ $rc -ne 2 ]; then
   echo "Error: deobfuscation failed after restoring $restored file(s)" >&2
   exit $rc
 fi
 
+stale_total=$((removed_stale + quarantined_stale))
+if [ $rc -eq 2 ] && [ "$restored" -eq 0 ] && [ "$stale_total" -eq 0 ]; then
+  echo "Nothing to deobfuscate."
+  exit 0
+fi
+
 echo ""
 echo "Restored $restored file(s). Manifest preserved for stable IDs."
+if [ "$stale_total" -gt 0 ]; then
+  echo "Reconciled $stale_total stale readable file(s): $removed_stale removed, $quarantined_stale quarantined."
+fi
 echo ""
 echo "Use 'notes changes' to see edits. 'notes stage' stages modified/deleted notes; use 'notes stage <file>' for new notes."

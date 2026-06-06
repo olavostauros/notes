@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 #MISE description="Show encryption and obfuscation status"
-#USAGE flag "--json" help="Output as JSON"
-#USAGE flag "--dir <dir>" help="Notes directory name (default: notes)"
+#USAGE flag "--json" default=#false help="Output as JSON"
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory name (default: notes)"
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
+source "$MISE_CONFIG_ROOT/lib/suppress.sh"
 source "$MISE_CONFIG_ROOT/lib/changes.sh"
+source "$MISE_CONFIG_ROOT/lib/conflicts.sh"
 require_git
 require_rudi
 
@@ -50,28 +53,47 @@ if [ "$enc_status" != "locked" ] && [ -f "$NOTES_DIR/.manifest" ]; then
   fi
 fi
 
-# --- Output ---
+# --- Incomplete deobfuscation detection ---
+
+incomplete_deobfuscation=""
+incomplete_conflicts=0
+if [ "$enc_status" != "locked" ] && [ -f "$NOTES_DIR/.manifest" ]; then
+  incomplete_deobfuscation=$(detect_dual_present_conflicts "$TARGET_DIR/$NOTES_DIR" 2>/dev/null) || true
+  if [ -n "$incomplete_deobfuscation" ]; then
+    incomplete_conflicts=$(printf '%s\n' "$incomplete_deobfuscation" | wc -l | tr -d ' ')
+  fi
+fi
+
+# --- Unmerged encrypted/obfuscated note content conflicts ---
+
+unmerged_content_conflicts=$(notes_conflict_records "$TARGET_DIR" "$NOTES_DIR" allow-unmapped 2>/dev/null) || true
+unmerged_content_conflict_count=0
+if [ -n "$unmerged_content_conflicts" ]; then
+  unmerged_content_conflict_count=$(printf '%s\n' "$unmerged_content_conflicts" | grep -c . || true)
+fi
 
 # --- Changes (only when deobfuscated) ---
 
 changes_modified=0
 changes_new=0
 changes_deleted=0
+changes_stale=0
 
 if [ "$obf_status" = "deobfuscated" ]; then
   changes=$(detect_changes "$TARGET_DIR/$NOTES_DIR" 2>/dev/null) || true
   if [ -n "$changes" ]; then
     while IFS=$'\t' read -r chg_status chg_relpath; do
       case "$chg_status" in
-        modified) ((changes_modified++)) || true ;;
-        new)      ((changes_new++)) || true ;;
-        deleted)  ((changes_deleted++)) || true ;;
+        modified)       ((changes_modified++)) || true ;;
+        new)            ((changes_new++)) || true ;;
+        deleted)        ((changes_deleted++)) || true ;;
+        stale-readable) ((changes_stale++)) || true ;;
       esac
     done <<< "$changes"
   fi
 fi
 
-changes_total=$((changes_modified + changes_new + changes_deleted))
+changes_total=$((changes_modified + changes_new + changes_deleted + changes_stale))
 
 # --- Output ---
 
@@ -80,9 +102,12 @@ if [ "$JSON" = "true" ]; then
     jq -nc \
       --arg enc "$enc_status" \
       --argjson enc_unlocked "$enc_unlocked" \
+      --argjson unmerged_content_conflicts "$unmerged_content_conflict_count" \
       '{
         encryption: { status: $enc, unlocked: $enc_unlocked },
         obfuscation: { status: "unknown", notes: null },
+        incomplete_deobfuscation: { conflicts: 0 },
+        unmerged_content_conflicts: { conflicts: $unmerged_content_conflicts },
         changes: null
       }'
   else
@@ -94,11 +119,16 @@ if [ "$JSON" = "true" ]; then
       --argjson chg_modified "$changes_modified" \
       --argjson chg_new "$changes_new" \
       --argjson chg_deleted "$changes_deleted" \
+      --argjson chg_stale "$changes_stale" \
       --argjson chg_total "$changes_total" \
+      --argjson incomplete_conflicts "$incomplete_conflicts" \
+      --argjson unmerged_content_conflicts "$unmerged_content_conflict_count" \
       '{
         encryption: { status: $enc, unlocked: $enc_unlocked },
         obfuscation: { status: $obf, notes: $total_notes },
-        changes: { total: $chg_total, modified: $chg_modified, new: $chg_new, deleted: $chg_deleted }
+        incomplete_deobfuscation: { conflicts: $incomplete_conflicts },
+        unmerged_content_conflicts: { conflicts: $unmerged_content_conflicts },
+        changes: { total: $chg_total, modified: $chg_modified, new: $chg_new, deleted: $chg_deleted, stale_readable: $chg_stale }
       }'
   fi
 else
@@ -113,12 +143,38 @@ else
     echo "Run 'notes unlock' to decrypt files and see obfuscation status."
   else
     echo "Obfuscation: $obf_status ($total_notes notes)"
+    if [ "$incomplete_conflicts" -gt 0 ]; then
+      echo ""
+      echo "Incomplete deobfuscation: $incomplete_conflicts conflict(s)"
+      while IFS=$'\t' read -r conflict_id conflict_relpath; do
+        [ -z "$conflict_id" ] && continue
+        echo "  $conflict_relpath (also present as $NOTES_DIR/$conflict_id)"
+      done <<< "$incomplete_deobfuscation"
+      echo "Run 'notes deobfuscate' after resolving local edits; use 'notes changes <file>' to inspect."
+    fi
     if [ "$obf_status" = "deobfuscated" ]; then
       if [ "$changes_total" -gt 0 ]; then
-        echo "Changes:     $changes_total ($changes_modified modified, $changes_new new, $changes_deleted deleted)"
+        echo "Changes:     $changes_total ($changes_modified modified, $changes_new new, $changes_deleted deleted, $changes_stale stale-readable)"
       else
         echo "Changes:     none"
       fi
     fi
+  fi
+
+  if [ "$unmerged_content_conflict_count" -gt 0 ]; then
+    echo ""
+    echo "Unmerged note content conflicts: $unmerged_content_conflict_count"
+    while IFS=$'\t' read -r conflict_id conflict_readable conflict_git_path; do
+      [ -z "$conflict_id" ] && continue
+      if [ "$conflict_readable" = "__NOTES_UNMAPPED__" ]; then
+        echo "  $conflict_git_path (readable name unavailable)"
+      elif [ -n "$conflict_readable" ]; then
+        echo "  $conflict_readable ($conflict_git_path)"
+      else
+        echo "  $conflict_git_path (readable name unavailable)"
+      fi
+    done <<< "$unmerged_content_conflicts"
+    echo "Run 'notes conflicts --out <dir>' to write readable base/ours/theirs artifacts."
+    echo "See: $NOTES_CONFLICT_RESOLUTION_URL"
   fi
 fi
