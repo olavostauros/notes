@@ -36,6 +36,16 @@ is_initialized() {
   [ -d "$TARGET_DIR/.git-crypt" ] || [ -d "$TARGET_DIR/.git/git-crypt" ]
 }
 
+# Returns 0 if git-crypt is unlocked in TARGET_DIR (per rudi), 1 otherwise.
+# Callers should run require_rudi first and cd into the repo (matches `status`).
+# Defaults to "not unlocked" on any rudi/jq failure so the caller falls through
+# to a real `rudi unlock`, which surfaces the underlying error.
+encryption_unlocked() {
+  local unlocked
+  unlocked=$(rudi status --json 2>/dev/null | jq -r '.unlocked' 2>/dev/null) || return 1
+  [ "$unlocked" = "true" ]
+}
+
 require_initialized() {
   if ! is_initialized; then
     echo "Error: git-crypt not initialized. Run: notes setup" >&2
