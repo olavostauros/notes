@@ -20,6 +20,9 @@ notes list
 notes search "workflow"
 notes show project-plan
 
+# Parse convention-aware components without changing raw Markdown reads.
+notes parse notes/project-plan.md
+
 # Check encryption + obfuscation state.
 notes status
 
@@ -45,6 +48,7 @@ notes changes --summary
 notes list --type skill
 notes search "review capacity" --tag workflow
 notes show project-plan --json
+notes parse notes/project-plan.md
 
 # Show readable diffs for local changes, refs, or PRs.
 notes diff
@@ -77,6 +81,7 @@ notes unlock
 - **Safe staging** — stages notes despite local exclude/assume-unchanged rules used for readable working copies.
 - **Readable review diffs** — materializes obfuscated note refs/PRs as readable Markdown and emits a normal patch.
 - **Readable conflict artifacts** — detects unmerged encrypted/obfuscated note content and writes base/ours/theirs Markdown files for manual resolution.
+- **Convention-aware parsing** — `notes parse <file>` returns JSON components for frontmatter and body without changing raw Markdown compatibility.
 
 ## Important gotchas
 
@@ -84,6 +89,7 @@ notes unlock
 - Use `notes stage` for notes, not raw `git add notes/`; readable note names are intentionally excluded locally.
 - After pulling shared note repos, inspect `notes status` and `notes changes --summary` before committing follow-up changes.
 - `notes unlock` / `notes deobfuscate` reconcile stale readable files left by upstream note deletion or rename. Clean generated stale files are removed; dirty or unproven stale files are moved to `.git/info/notes-stale-readable/` so they cannot be accidentally staged as new notes.
+- `notes parse` is a parser/query foundation for existing Markdown/frontmatter conventions. Raw Markdown reads remain valid; future conventions should settle separately before they become parser output.
 
 ## Development
 
