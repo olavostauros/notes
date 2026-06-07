@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+#MISE description="Commit note changes through notes' stage/obfuscate/deobfuscate workflow"
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--all" default=#false help="Commit all changed notes, including new notes"
+#USAGE flag "--dry-run" default=#false help="Show what would be staged/committed without doing it"
+#USAGE flag "-m --message <message>" default="" help="Commit message"
+#USAGE arg "[files]" var=#true default="" help="Specific notes to commit (readable names, relative to notes dir). Use --all to commit every changed note."
+set -euo pipefail
+
+source "$MISE_CONFIG_ROOT/lib/common.sh"
+source "$MISE_CONFIG_ROOT/lib/obfuscate.sh"
+source "$MISE_CONFIG_ROOT/lib/suppress.sh"
+source "$MISE_CONFIG_ROOT/lib/changes.sh"
+require_git
+
+notes_dir="${usage_dir:-notes}"
+abs_notes_dir="$TARGET_DIR/$notes_dir"
+manifest="$abs_notes_dir/.manifest"
+message="${usage_message:-}"
+scope_all="${usage_all:-false}"
+dry_run="${usage_dry_run:-false}"
+
+if [ ! -f "$manifest" ]; then
+  echo "No manifest found. Run 'notes obfuscate' first." >&2
+  exit 1
+fi
+
+ARGS=()
+if [ -n "${usage_files:-}" ]; then
+  while IFS= read -r arg; do
+    arg="${arg#"${notes_dir}/"}"
+    [ -z "$arg" ] && continue
+    ARGS+=("$arg")
+  done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
+fi
+
+if [ -z "$message" ]; then
+  echo "Error: notes commit requires -m/--message." >&2
+  exit 1
+fi
+
+if [ "$scope_all" = "true" ] && [ ${#ARGS[@]} -gt 0 ]; then
+  echo "Error: provide note paths or --all, not both." >&2
+  exit 1
+fi
+
+if [ "$scope_all" != "true" ] && [ ${#ARGS[@]} -eq 0 ]; then
+  echo "Error: provide note paths or --all." >&2
+  echo "Examples:" >&2
+  echo "  notes commit -m \"notes: update foo\" notes/foo.md" >&2
+  echo "  notes commit --all -m \"notes: update garden\"" >&2
+  exit 1
+fi
+
+scope_matches() {
+  local relpath="$1"
+  local f
+  if [ "$scope_all" = "true" ]; then
+    return 0
+  fi
+  for f in ${ARGS[@]+"${ARGS[@]}"}; do
+    [ "$f" = "$relpath" ] && return 0
+  done
+  return 1
+}
+
+git_path_abs() {
+  local path
+  path=$(git -C "$TARGET_DIR" rev-parse --git-path "$1")
+  case "$path" in
+    /*) printf '%s\n' "$path" ;;
+    *) printf '%s/%s\n' "$TARGET_DIR" "$path" ;;
+  esac
+}
+
+require_commit_hooks() {
+  local dispatcher_pre dispatcher_post hook_pre hook_post
+  dispatcher_pre=$(git_path_abs hooks/pre-commit)
+  dispatcher_post=$(git_path_abs hooks/post-commit)
+  hook_pre=$(git_path_abs hooks/pre-commit.d/obfuscation)
+  hook_post=$(git_path_abs hooks/post-commit.d/deobfuscation)
+
+  if [ ! -x "$dispatcher_pre" ] || [ ! -x "$dispatcher_post" ] || [ ! -x "$hook_pre" ] || [ ! -x "$hook_post" ]; then
+    echo "Error: notes commit requires installed obfuscation/deobfuscation hooks." >&2
+    echo "Run: notes install-hooks" >&2
+    exit 1
+  fi
+}
+
+require_no_preexisting_staged_changes() {
+  local staged
+  staged=$(git -C "$TARGET_DIR" diff --cached --name-only)
+  if [ -n "$staged" ]; then
+    echo "Error: staged changes already exist; refusing to mix them into notes commit." >&2
+    echo "$staged" | sed 's/^/  /' >&2
+    echo "Commit or unstage them first, then retry." >&2
+    exit 1
+  fi
+}
+
+verify_no_readable_paths_tracked() {
+  local bad=() id relpath
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    if git -C "$TARGET_DIR" ls-files --error-unmatch -- "$notes_dir/$relpath" >/dev/null 2>&1; then
+      bad+=("$relpath")
+    fi
+  done < "$manifest"
+
+  if [ ${#bad[@]} -gt 0 ]; then
+    echo "Error: commit created tracked readable note path(s); repair before pushing:" >&2
+    for relpath in ${bad[@]+"${bad[@]}"}; do
+      echo "  $notes_dir/$relpath" >&2
+    done
+    return 1
+  fi
+}
+
+verify_worktree_deobfuscated() {
+  local bad=() id relpath
+  while IFS=$'\t' read -r id relpath; do
+    [ -z "$id" ] && continue
+    if [ -f "$abs_notes_dir/$id" ] && [ ! -f "$abs_notes_dir/$relpath" ]; then
+      bad+=("$relpath")
+    fi
+  done < "$manifest"
+
+  if [ ${#bad[@]} -gt 0 ]; then
+    echo "Error: commit left obfuscated note file(s) on disk without readable counterparts:" >&2
+    for relpath in ${bad[@]+"${bad[@]}"}; do
+      echo "  $relpath" >&2
+    done
+    return 1
+  fi
+}
+
+verify_manifest_clean() {
+  if ! git -C "$TARGET_DIR" diff --quiet -- "$notes_dir/.manifest" || \
+     ! git -C "$TARGET_DIR" diff --cached --quiet -- "$notes_dir/.manifest"; then
+    echo "Error: notes/.manifest is dirty after commit; repair before pushing." >&2
+    return 1
+  fi
+}
+
+verify_no_staged_residue() {
+  local staged
+  staged=$(git -C "$TARGET_DIR" diff --cached --name-only)
+  if [ -n "$staged" ]; then
+    echo "Error: staged changes remain after notes commit:" >&2
+    echo "$staged" | sed 's/^/  /' >&2
+    return 1
+  fi
+}
+
+verify_commit_touched_only_notes() {
+  local changed=() bad=() path
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    changed+=("$path")
+  done < <(git -C "$TARGET_DIR" diff-tree --no-commit-id --name-only -r HEAD --)
+
+  for path in ${changed[@]+"${changed[@]}"}; do
+    case "$path" in
+      "$notes_dir"/*) ;;
+      *) bad+=("$path") ;;
+    esac
+  done
+
+  if [ ${#bad[@]} -gt 0 ]; then
+    echo "Error: notes commit included non-note path(s):" >&2
+    for path in ${bad[@]+"${bad[@]}"}; do
+      echo "  $path" >&2
+    done
+    return 1
+  fi
+}
+
+verify_selected_changes_clean() {
+  local remaining bad_selected=() status relpath
+  remaining=$(detect_changes "$abs_notes_dir") || true
+
+  if [ -z "$remaining" ]; then
+    echo "Notes changes: clean."
+    return 0
+  fi
+
+  while IFS=$'\t' read -r status relpath; do
+    [ -z "$relpath" ] && continue
+    if [ "$scope_all" = "true" ] || scope_matches "$relpath"; then
+      bad_selected+=("$status"$'\t'"$relpath")
+    fi
+  done <<< "$remaining"
+
+  if [ ${#bad_selected[@]} -gt 0 ]; then
+    echo "Error: selected note changes remain after commit:" >&2
+    for entry in ${bad_selected[@]+"${bad_selected[@]}"}; do
+      IFS=$'\t' read -r status relpath <<< "$entry"
+      echo "  $status: $relpath" >&2
+    done
+    return 1
+  fi
+
+  echo "Remaining note changes:"
+  while IFS=$'\t' read -r status relpath; do
+    [ -z "$relpath" ] && continue
+    echo "  $status: $relpath"
+  done <<< "$remaining"
+}
+
+stage_args=(stage --dir "$notes_dir")
+if [ "$scope_all" = "true" ]; then
+  stage_args+=(--all)
+else
+  stage_args+=("${ARGS[@]}")
+fi
+
+if [ "$dry_run" = "true" ]; then
+  NOTES_CALLER_PWD="$TARGET_DIR" mise run -q "${stage_args[@]}" --dry-run
+  echo ""
+  echo "Would commit with message: $message"
+  exit 0
+fi
+
+require_commit_hooks
+require_no_preexisting_staged_changes
+
+NOTES_CALLER_PWD="$TARGET_DIR" mise run -q "${stage_args[@]}"
+
+if [ -z "$(git -C "$TARGET_DIR" diff --cached --name-only)" ]; then
+  echo "No selected note changes to commit."
+  exit 0
+fi
+
+git -C "$TARGET_DIR" commit -m "$message"
+
+verify_failed=false
+verify_no_staged_residue || verify_failed=true
+verify_commit_touched_only_notes || verify_failed=true
+verify_no_readable_paths_tracked || verify_failed=true
+verify_worktree_deobfuscated || verify_failed=true
+verify_manifest_clean || verify_failed=true
+verify_selected_changes_clean || verify_failed=true
+
+if $verify_failed; then
+  echo "Error: commit was created but notes post-commit verification failed." >&2
+  exit 1
+fi
+
+printf 'Committed note changes: %s\n' "$(git -C "$TARGET_DIR" rev-parse --short HEAD)"

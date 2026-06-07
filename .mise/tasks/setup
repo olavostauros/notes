@@ -165,7 +165,8 @@ else
     echo "Editing workflow:"
     echo "  notes changes            Show what's changed (diffs)"
     echo "  notes changes --summary  Show change summary"
-    echo "  notes stage              Stage modified/deleted notes for commit"
-    echo "  notes stage <file>       Stage a specific note (required for new notes)"
+    echo "  notes commit -m \"...\" <file>  Commit specific note changes"
+    echo "  notes commit --all -m \"...\"   Commit all note changes"
+    echo "  notes stage <file>|--all         Low-level staging when needed"
   fi
 fi

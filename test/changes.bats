@@ -302,30 +302,41 @@ rename_manifest_entry_in_head() {
   [[ "$output" == *"alpha.md"* ]]
 }
 
-@test "notes stage: no args skips new notes but stages modified notes" {
+@test "notes stage: no args requires explicit scope" {
   echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
   echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
 
   run notes stage
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"staged: alpha.md"* ]]
-  [[ "$output" == *"Skipped 1 new note(s)"* ]]
-  [[ "$output" == *"new: gamma.md"* ]]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"provide note paths or --all"* ]]
 
   run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
-  [[ "$output" == *"notes/alpha.md"* ]]
-  [[ "$output" != *"notes/gamma.md"* ]]
+  [ -z "$output" ]
 }
 
-@test "notes stage: no args ignores inherited usage_files" {
+@test "notes stage: no args ignores inherited usage_files and still requires scope" {
   echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
 
   usage_files="gamma.md" run notes stage
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"provide note paths or --all"* ]]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
+@test "notes stage --all stages modified and new notes" {
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
+
+  run notes stage --all
   [ "$status" -eq 0 ]
   [[ "$output" == *"staged: alpha.md"* ]]
+  [[ "$output" == *"staged: gamma.md"* ]]
 
   run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
   [[ "$output" == *"notes/alpha.md"* ]]
+  [[ "$output" == *"notes/gamma.md"* ]]
 }
 
 @test "notes stage: explicit file stages a new note" {
@@ -339,12 +350,37 @@ rename_manifest_entry_in_head() {
   [[ "$output" == *"notes/gamma.md"* ]]
 }
 
+@test "notes stage: explicit unknown path fails instead of silently selecting nothing" {
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes stage alhpa.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requested note path"* ]]
+  [[ "$output" == *"alhpa.md"* ]]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
+@test "notes stage: path traversal argument fails instead of selecting nothing" {
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "readme" > "$NOTES_CALLER_PWD/README.md"
+
+  run notes stage ../README.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requested note path"* ]]
+  [[ "$output" == *"../README.md"* ]]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
 @test "notes stage --dry-run: deleted note leaves manifest and index untouched" {
   local manifest_before
   manifest_before=$(cat "$MANIFEST")
   rm "$NOTES_CALLER_PWD/notes/alpha.md"
 
-  run notes stage --dry-run
+  run notes stage --all --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"Would stage:"* ]]
   [[ "$output" == *"alpha.md"* ]]
@@ -360,7 +396,7 @@ rename_manifest_entry_in_head() {
   rm "$NOTES_CALLER_PWD/notes/alpha.md"
   touch "$NOTES_CALLER_PWD/.git/index.lock"
 
-  run notes stage
+  run notes stage --all
   rm -f "$NOTES_CALLER_PWD/.git/index.lock"
 
   [ "$status" -ne 0 ]
@@ -388,7 +424,7 @@ exec "$real_git" "\$@"
 SH
   chmod +x "$BATS_TEST_TMPDIR/bin/git"
 
-  PATH="$BATS_TEST_TMPDIR/bin:$PATH" run notes stage
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" run notes stage --all
   [ "$status" -ne 0 ]
   [ "$(cat "$MANIFEST")" = "$manifest_before" ]
 
@@ -396,7 +432,7 @@ SH
   [[ "$output" == *$'D\tnotes/'"$alpha_id"* ]]
   [[ "$output" != *$'M\tnotes/.manifest'* ]]
 
-  run notes stage
+  run notes stage --all
   [ "$status" -eq 0 ]
   run git -C "$NOTES_CALLER_PWD" diff --cached --name-status
   [[ "$output" == *$'D\tnotes/'"$alpha_id"* ]]
@@ -412,7 +448,7 @@ SH
   alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
   rm "$NOTES_CALLER_PWD/notes/alpha.md"
 
-  run notes stage
+  run notes stage --all
   [ "$status" -eq 0 ]
   [[ "$output" == *"staged (delete): alpha.md"* ]]
 
@@ -448,7 +484,7 @@ SH
   [[ "$output" != *"notes/alpha.md"* ]]
 }
 
-@test "notes stage: no args refuses stale readable files left from another branch" {
+@test "notes stage --all refuses stale readable files left from another branch" {
   local repo="$BATS_TEST_TMPDIR/branch-repo"
   mkdir -p "$repo/notes"
   git -C "$repo" init -q -b main
@@ -480,7 +516,7 @@ SH
   [[ "$output" == *"stale-readable: beta.md"* ]]
   [[ "$output" != *"new:       beta.md"* ]]
 
-  NOTES_CALLER_PWD="$repo" run notes stage
+  NOTES_CALLER_PWD="$repo" run notes stage --all
   [ "$status" -ne 0 ]
   [[ "$output" == *"stale readable note"* ]]
   [[ "$output" == *"beta.md"* ]]
@@ -587,7 +623,7 @@ SH
   [[ "$output" == *"No changes."* ]]
 }
 
-@test "notes stage: skipped new manifest entry does not leak through pre-commit hook" {
+@test "notes stage: path-limited stage does not leak unselected new manifest entry through pre-commit hook" {
   source "$REPO_DIR/lib/hooks.sh"
   install_obfuscation_hook
   install_deobfuscation_hook
@@ -596,11 +632,10 @@ SH
   printf 'cccccccc\tgamma.md\n' >> "$MANIFEST"
   echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
 
-  run notes stage
+  run notes stage alpha.md
   [ "$status" -eq 0 ]
   [[ "$output" == *"staged: alpha.md"* ]]
-  [[ "$output" == *"Skipped 1 new note(s)"* ]]
-  [[ "$output" == *"new: gamma.md"* ]]
+  [[ "$output" != *"gamma.md"* ]]
 
   git -C "$NOTES_CALLER_PWD" commit -q -m "update alpha"
 
@@ -610,6 +645,203 @@ SH
 
   run git -C "$NOTES_CALLER_PWD" show --name-only --format= HEAD
   [[ "$output" != *"gamma"* ]]
+}
+
+# ── commit wrapper ───────────────────────────────────────────
+
+@test "notes commit: explicit file commits modified note and leaves clean readable tree" {
+  notes install-hooks
+
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes commit -m "update alpha" alpha.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Committed note changes"* ]]
+  [[ "$output" == *"Notes changes: clean"* ]]
+
+  [ "$(git -C "$NOTES_CALLER_PWD" log -1 --format=%s)" = "update alpha" ]
+  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+  [[ "$(cat "$NOTES_CALLER_PWD/notes/alpha.md")" == *"Alpha v2"* ]]
+
+  local committed_files
+  committed_files=$(git -C "$NOTES_CALLER_PWD" show --name-only --format='' HEAD -- notes/)
+  ! echo "$committed_files" | grep -q "alpha.md"
+
+  run detect_changes "$NOTES_CALLER_PWD/notes"
+  [ -z "$output" ]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+
+  run git -C "$NOTES_CALLER_PWD" ls-files notes/alpha.md
+  [ -z "$output" ]
+}
+
+@test "notes commit --all commits modified new and deleted notes" {
+  notes install-hooks
+
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "# Gamma" > "$NOTES_CALLER_PWD/notes/gamma.md"
+  rm "$NOTES_CALLER_PWD/notes/beta.md"
+
+  run notes commit --all -m "update all notes"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged: alpha.md"* ]]
+  [[ "$output" == *"staged: gamma.md"* ]]
+  [[ "$output" == *"staged (delete): beta.md"* ]]
+  [[ "$output" == *"Notes changes: clean"* ]]
+
+  [ -f "$NOTES_CALLER_PWD/notes/alpha.md" ]
+  [ -f "$NOTES_CALLER_PWD/notes/gamma.md" ]
+  [ ! -f "$NOTES_CALLER_PWD/notes/beta.md" ]
+  ! grep -q "beta.md" "$MANIFEST"
+  grep -q "gamma.md" "$MANIFEST"
+
+  run detect_changes "$NOTES_CALLER_PWD/notes"
+  [ -z "$output" ]
+}
+
+@test "notes commit: path-limited commit leaves unrelated dirty notes uncommitted" {
+  notes install-hooks
+
+  local alpha_id beta_id
+  alpha_id=$(manifest_id_for_name "$MANIFEST" "alpha.md")
+  beta_id=$(manifest_id_for_name "$MANIFEST" "beta.md")
+
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "# Beta v2" > "$NOTES_CALLER_PWD/notes/beta.md"
+
+  run notes commit -m "update alpha only" alpha.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Remaining note changes"* ]]
+  [[ "$output" == *"modified: beta.md"* ]]
+  [[ "$output" != *"modified: alpha.md"* ]]
+
+  git -C "$NOTES_CALLER_PWD" cat-file --filters "HEAD:notes/$alpha_id" | grep -q "Alpha v2"
+  git -C "$NOTES_CALLER_PWD" cat-file --filters "HEAD:notes/$beta_id" | grep -q "# Beta"
+  ! git -C "$NOTES_CALLER_PWD" cat-file --filters "HEAD:notes/$beta_id" | grep -q "Beta v2"
+
+  run detect_changes "$NOTES_CALLER_PWD/notes"
+  [[ "$output" == *"modified"*"beta.md"* ]]
+  [[ "$output" != *"alpha.md"* ]]
+}
+
+@test "notes commit --dry-run shows staged plan without staging or committing" {
+  local before
+  before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes commit --dry-run -m "update alpha" alpha.md
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Would stage:"* ]]
+  [[ "$output" == *"alpha.md"* ]]
+  [[ "$output" == *"Would commit with message: update alpha"* ]]
+  [ "$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)" = "$before" ]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
+@test "notes commit: no args requires explicit scope" {
+  notes install-hooks
+  local before
+  before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes commit -m "missing scope"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"provide note paths or --all"* ]]
+  [ "$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)" = "$before" ]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
+@test "notes commit: explicit unknown path fails instead of silently committing nothing" {
+  notes install-hooks
+  local before
+  before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes commit -m "typo" alhpa.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requested note path"* ]]
+  [[ "$output" == *"alhpa.md"* ]]
+  [ "$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)" = "$before" ]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
+@test "notes commit: path traversal argument fails instead of silently committing nothing" {
+  notes install-hooks
+  local before
+  before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "readme" > "$NOTES_CALLER_PWD/README.md"
+
+  run notes commit -m "traversal" ../README.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requested note path"* ]]
+  [[ "$output" == *"../README.md"* ]]
+  [ "$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)" = "$before" ]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
+@test "notes commit: refuses pre-staged changes before staging notes" {
+  notes install-hooks
+  local before
+  before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
+  echo "readme" > "$NOTES_CALLER_PWD/README.md"
+  git -C "$NOTES_CALLER_PWD" add README.md
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes commit --all -m "should refuse"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"staged changes already exist"* ]]
+  [[ "$output" == *"README.md"* ]]
+  [ "$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)" = "$before" ]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ "$output" = "README.md" ]
+}
+
+@test "notes commit: detects non-note paths added by another pre-commit hook" {
+  notes install-hooks
+  mkdir -p "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d"
+  cat > "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/zz-stage-generated" <<'HOOK'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'generated by hook\n' > hook-generated.txt
+git add hook-generated.txt
+HOOK
+  chmod +x "$NOTES_CALLER_PWD/.git/hooks/pre-commit.d/zz-stage-generated"
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes commit -m "update alpha" alpha.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"included non-note path"* ]]
+  [[ "$output" == *"hook-generated.txt"* ]]
+
+  run git -C "$NOTES_CALLER_PWD" show --name-only --format= HEAD
+  [[ "$output" == *"hook-generated.txt"* ]]
+}
+
+@test "notes commit: refuses missing hooks before staging or committing" {
+  local before
+  before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes commit -m "update alpha" alpha.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requires installed obfuscation/deobfuscation hooks"* ]]
+  [[ "$output" == *"notes install-hooks"* ]]
+  [ "$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)" = "$before" ]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
 }
 
 # ── full lifecycle ────────────────────────────────────────────

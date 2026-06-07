@@ -10,8 +10,9 @@
 #   - `assume-unchanged` on obfuscated paths → hides "deleted" noise
 #   - `.git/info/exclude` entries for readable names → hides "untracked" noise
 #
-# Because exclude also blocks `git add`, users stage notes via `notes stage`
-# (which uses `git add -f` to bypass exclude). See notes#39.
+# Because exclude also blocks `git add`, users commit notes via `notes commit`
+# or stage them explicitly via `notes stage`; both use `git add -f` to bypass
+# exclude. See notes#39.
 
 # Managed block markers in .git/info/exclude
 EXCLUDE_BEGIN="# BEGIN notes-obfuscation"
