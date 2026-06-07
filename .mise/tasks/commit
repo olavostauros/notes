@@ -152,6 +152,29 @@ verify_no_staged_residue() {
   fi
 }
 
+verify_commit_touched_only_notes() {
+  local changed=() bad=() path
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    changed+=("$path")
+  done < <(git -C "$TARGET_DIR" diff-tree --no-commit-id --name-only -r HEAD --)
+
+  for path in ${changed[@]+"${changed[@]}"}; do
+    case "$path" in
+      "$notes_dir"/*) ;;
+      *) bad+=("$path") ;;
+    esac
+  done
+
+  if [ ${#bad[@]} -gt 0 ]; then
+    echo "Error: notes commit included non-note path(s):" >&2
+    for path in ${bad[@]+"${bad[@]}"}; do
+      echo "  $path" >&2
+    done
+    return 1
+  fi
+}
+
 verify_selected_changes_clean() {
   local remaining bad_selected=() status relpath
   remaining=$(detect_changes "$abs_notes_dir") || true
@@ -212,6 +235,7 @@ git -C "$TARGET_DIR" commit -m "$message"
 
 verify_failed=false
 verify_no_staged_residue || verify_failed=true
+verify_commit_touched_only_notes || verify_failed=true
 verify_no_readable_paths_tracked || verify_failed=true
 verify_worktree_deobfuscated || verify_failed=true
 verify_manifest_clean || verify_failed=true
