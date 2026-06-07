@@ -62,6 +62,23 @@ scope_matches() {
 # Detect changes
 changes=$(detect_changes "$abs_notes_dir") || true
 
+if [ "$scope_all" != "true" ]; then
+  unknown=()
+  for f in ${ARGS[@]+"${ARGS[@]}"}; do
+    if [ -f "$abs_notes_dir/$f" ] || [ -n "$(manifest_id_for_name "$manifest" "$f")" ]; then
+      continue
+    fi
+    unknown+=("$f")
+  done
+  if [ ${#unknown[@]} -gt 0 ]; then
+    echo "Error: requested note path(s) are not known notes:" >&2
+    for f in ${unknown[@]+"${unknown[@]}"}; do
+      echo "  $f" >&2
+    done
+    exit 1
+  fi
+fi
+
 if [ -z "$changes" ]; then
   echo "No changes to stage."
   exit 0
