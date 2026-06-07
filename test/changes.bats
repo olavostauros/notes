@@ -350,6 +350,18 @@ rename_manifest_entry_in_head() {
   [[ "$output" == *"notes/gamma.md"* ]]
 }
 
+@test "notes stage: explicit unknown path fails instead of silently selecting nothing" {
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes stage alhpa.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requested note path"* ]]
+  [[ "$output" == *"alhpa.md"* ]]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
 @test "notes stage --dry-run: deleted note leaves manifest and index untouched" {
   local manifest_before
   manifest_before=$(cat "$MANIFEST")
@@ -726,6 +738,22 @@ SH
   run notes commit -m "missing scope"
   [ "$status" -ne 0 ]
   [[ "$output" == *"provide note paths or --all"* ]]
+  [ "$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)" = "$before" ]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
+@test "notes commit: explicit unknown path fails instead of silently committing nothing" {
+  notes install-hooks
+  local before
+  before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+
+  run notes commit -m "typo" alhpa.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requested note path"* ]]
+  [[ "$output" == *"alhpa.md"* ]]
   [ "$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)" = "$before" ]
 
   run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
