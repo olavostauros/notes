@@ -65,6 +65,12 @@ changes=$(detect_changes "$abs_notes_dir") || true
 if [ "$scope_all" != "true" ]; then
   unknown=()
   for f in ${ARGS[@]+"${ARGS[@]}"}; do
+    case "$f" in
+      /*|..|../*|*/../*|.|./*|*/./*|*/)
+        unknown+=("$f")
+        continue
+        ;;
+    esac
     if [ -f "$abs_notes_dir/$f" ] || [ -n "$(manifest_id_for_name "$manifest" "$f")" ]; then
       continue
     fi
