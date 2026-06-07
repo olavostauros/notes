@@ -155,4 +155,4 @@ if [ "$stale_total" -gt 0 ]; then
   echo "Reconciled $stale_total stale readable file(s): $removed_stale removed, $quarantined_stale quarantined."
 fi
 echo ""
-echo "Use 'notes changes' to see edits. 'notes stage' stages modified/deleted notes; use 'notes stage <file>' for new notes."
+echo "Use 'notes changes' to see edits. Use 'notes commit -m \"...\" <file>' or 'notes commit --all -m \"...\"' to commit note changes."

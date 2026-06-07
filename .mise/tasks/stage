@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #MISE description="Stage notes for commit (bypasses exclude)"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root (default: notes)"
+#USAGE flag "--all" default=#false help="Stage all changed notes, including new notes"
 #USAGE flag "--dry-run" default=#false help="Show what would be staged without doing it"
-#USAGE arg "[files]" var=#true default="" help="Specific notes to stage (readable names, relative to notes dir). Omit to stage modified/deleted only; new notes require explicit files."
+#USAGE arg "[files]" var=#true default="" help="Specific notes to stage (readable names, relative to notes dir). Use --all to stage every changed note."
 set -euo pipefail
 
 source "$MISE_CONFIG_ROOT/lib/common.sh"
@@ -31,6 +32,33 @@ if [ -n "${usage_files:-}" ]; then
   done < <(printf '%s' "${usage_files}" | xargs printf '%s\n')
 fi
 
+scope_all="${usage_all:-false}"
+
+if [ "$scope_all" = "true" ] && [ ${#ARGS[@]} -gt 0 ]; then
+  echo "Error: provide note paths or --all, not both." >&2
+  exit 1
+fi
+
+if [ "$scope_all" != "true" ] && [ ${#ARGS[@]} -eq 0 ]; then
+  echo "Error: provide note paths or --all." >&2
+  echo "Examples:" >&2
+  echo "  notes stage notes/foo.md" >&2
+  echo "  notes stage --all" >&2
+  exit 1
+fi
+
+scope_matches() {
+  local relpath="$1"
+  local f
+  if [ "$scope_all" = "true" ]; then
+    return 0
+  fi
+  for f in ${ARGS[@]+"${ARGS[@]}"}; do
+    [ "$f" = "$relpath" ] && return 0
+  done
+  return 1
+}
+
 # Detect changes
 changes=$(detect_changes "$abs_notes_dir") || true
 
@@ -39,28 +67,12 @@ if [ -z "$changes" ]; then
   exit 0
 fi
 
-# Filter and collect files to stage. With no explicit file arguments, stage only
-# modifications/deletions (git add -u semantics). New notes must be staged
-# explicitly so stale readable files left by a different branch cannot silently
-# enter the next commit.
-explicit_files=false
-if [ ${#ARGS[@]} -gt 0 ] && [ -n "${ARGS[0]}" ]; then
-  explicit_files=true
-fi
-
 to_stage=()
-skipped_new=()
 stale_notes=()
 
 while IFS=$'\t' read -r status relpath; do
   [ "$status" = "stale-readable" ] || continue
-  if $explicit_files; then
-    match=false
-    for f in ${ARGS[@]+"${ARGS[@]}"}; do
-      [ "$f" = "$relpath" ] && match=true && break
-    done
-    $match || continue
-  fi
+  scope_matches "$relpath" || continue
   stale_notes+=("$relpath")
 done <<< "$changes"
 
@@ -79,13 +91,7 @@ if [ -n "$conflicting_notes" ]; then
   blocked_conflicts=()
   while IFS=$'\t' read -r conflict_id conflict_relpath; do
     [ -z "$conflict_id" ] && continue
-    if $explicit_files; then
-      match=false
-      for f in ${ARGS[@]+"${ARGS[@]}"}; do
-        [ "$f" = "$conflict_relpath" ] && match=true && break
-      done
-      $match || continue
-    fi
+    scope_matches "$conflict_relpath" || continue
     blocked_conflicts+=("$conflict_id"$'\t'"$conflict_relpath")
   done <<< "$conflicting_notes"
 
@@ -106,37 +112,15 @@ if [ -n "$conflicting_notes" ]; then
   fi
 fi
 
-print_skipped_new() {
-  [ ${#skipped_new[@]} -eq 0 ] && return 0
-
-  echo "Skipped ${#skipped_new[@]} new note(s). Stage explicitly with: notes stage <file>"
-  for relpath in ${skipped_new[@]+"${skipped_new[@]}"}; do
-    echo "  new: $relpath"
-  done
-}
-
 while IFS=$'\t' read -r status relpath; do
-  if $explicit_files; then
-    match=false
-    for f in ${ARGS[@]+"${ARGS[@]}"}; do
-      [ "$f" = "$relpath" ] && match=true && break
-    done
-    $match || continue
-  fi
+  scope_matches "$relpath" || continue
 
   case "$status" in
-    modified)
+    modified|new)
       to_stage+=("$relpath")
       ;;
-    new)
-      if $explicit_files; then
-        to_stage+=("$relpath")
-      else
-        skipped_new+=("$relpath")
-      fi
-      ;;
     deleted)
-      # For deleted notes, we need to remove the obfuscated file from the index
+      # For deleted notes, we need to remove the obfuscated file from the index.
       to_stage+=("$relpath")
       ;;
     stale-readable)
@@ -146,8 +130,7 @@ while IFS=$'\t' read -r status relpath; do
 done <<< "$changes"
 
 if [ ${#to_stage[@]} -eq 0 ]; then
-  echo "No changes to stage."
-  print_skipped_new
+  echo "No selected changes to stage."
   exit 0
 fi
 
@@ -156,7 +139,6 @@ if [ "${usage_dry_run:-}" = "true" ]; then
   for relpath in ${to_stage[@]+"${to_stage[@]}"}; do
     echo "  $relpath"
   done
-  print_skipped_new
   exit 0
 fi
 
@@ -166,11 +148,11 @@ for relpath in ${to_stage[@]+"${to_stage[@]}"}; do
   local_file="$abs_notes_dir/$relpath"
 
   if [ -f "$local_file" ]; then
-    # Modified or new: force-add the readable file
+    # Modified or new: force-add the readable file.
     git -C "$TARGET_DIR" add -f "$notes_dir/$relpath"
     echo "  staged: $relpath"
   else
-    # Deleted: remove the obfuscated ID from the index
+    # Deleted: remove the obfuscated ID from the index.
     id=$(manifest_id_for_name "$manifest" "$relpath")
     if [ -n "$id" ]; then
       # First remove the tracked blob when it is still present in the index.
@@ -200,4 +182,3 @@ done
 
 echo ""
 echo "Staged $staged file(s). Run 'git commit' to commit."
-print_skipped_new
