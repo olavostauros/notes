@@ -82,6 +82,7 @@ notes unlock
 - **Readable review diffs** — materializes obfuscated note refs/PRs as readable Markdown and emits a normal patch.
 - **Readable conflict artifacts** — detects unmerged encrypted/obfuscated note content and writes base/ours/theirs Markdown files for manual resolution.
 - **Convention-aware parsing** — `notes parse <file>` returns JSON components for frontmatter and body without changing raw Markdown compatibility.
+- **Wikilink graph telemetry** — `notes audit` reports inbound/outbound link counts per note and surfaces broken `[[targets]]`. Generic; layered analyses (e.g. pattern maturity) consume the `--json` output.
 
 ## Important gotchas
 

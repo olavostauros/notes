@@ -1,0 +1,43 @@
+#!/usr/bin/env -S uv run --script
+#MISE description="Audit the wikilink graph — top inbound/outbound, broken targets"
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
+#USAGE flag "--top <n>" default="10" help="How many notes to show in top-N lists"
+#USAGE flag "--json" default=#false help="Emit full per-note counts as JSON instead of the human-readable summary"
+# /// script
+# dependencies = []
+# ///
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+repo_dir = Path(os.environ["MISE_CONFIG_ROOT"])
+target_dir = Path(os.environ.get("NOTES_CALLER_PWD", "."))
+notes_dir = target_dir / os.environ.get("usage_dir", "notes")
+
+sys.path.insert(0, str(repo_dir / "lib"))
+from audit import audit_directory, parse_top, render_human, render_json  # noqa: E402
+
+
+def main() -> int:
+    if not notes_dir.is_dir():
+        print(f"Error: notes directory not found: {notes_dir}", file=sys.stderr)
+        return 1
+
+    try:
+        top_n = parse_top(os.environ.get("usage_top", "10"))
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    result = audit_directory(notes_dir)
+    if os.environ.get("usage_json", "false") == "true":
+        print(render_json(result))
+    else:
+        print(render_human(result, top_n))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
