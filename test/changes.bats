@@ -362,6 +362,19 @@ rename_manifest_entry_in_head() {
   [ -z "$output" ]
 }
 
+@test "notes stage: path traversal argument fails instead of selecting nothing" {
+  echo "# Alpha modified" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "readme" > "$NOTES_CALLER_PWD/README.md"
+
+  run notes stage ../README.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requested note path"* ]]
+  [[ "$output" == *"../README.md"* ]]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
 @test "notes stage --dry-run: deleted note leaves manifest and index untouched" {
   local manifest_before
   manifest_before=$(cat "$MANIFEST")
@@ -754,6 +767,23 @@ SH
   [ "$status" -ne 0 ]
   [[ "$output" == *"requested note path"* ]]
   [[ "$output" == *"alhpa.md"* ]]
+  [ "$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)" = "$before" ]
+
+  run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
+  [ -z "$output" ]
+}
+
+@test "notes commit: path traversal argument fails instead of silently committing nothing" {
+  notes install-hooks
+  local before
+  before=$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)
+  echo "# Alpha v2" > "$NOTES_CALLER_PWD/notes/alpha.md"
+  echo "readme" > "$NOTES_CALLER_PWD/README.md"
+
+  run notes commit -m "traversal" ../README.md
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"requested note path"* ]]
+  [[ "$output" == *"../README.md"* ]]
   [ "$(git -C "$NOTES_CALLER_PWD" rev-parse HEAD)" = "$before" ]
 
   run git -C "$NOTES_CALLER_PWD" diff --cached --name-only
