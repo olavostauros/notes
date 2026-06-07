@@ -1,197 +1,43 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S uv run --script
 #MISE description="Audit the wikilink graph — top inbound/outbound, broken targets"
 #USAGE flag "--dir <dir>" default="notes" help="Notes directory relative to repo root"
 #USAGE flag "--top <n>" default="10" help="How many notes to show in top-N lists"
 #USAGE flag "--json" default=#false help="Emit full per-note counts as JSON instead of the human-readable summary"
-set -euo pipefail
+# /// script
+# dependencies = []
+# ///
+from __future__ import annotations
 
-TARGET_DIR="${NOTES_CALLER_PWD:-.}"
-notes_dir="$TARGET_DIR/$usage_dir"
-
-if [ ! -d "$notes_dir" ]; then
-  echo "Error: notes directory not found: $notes_dir" >&2
-  exit 1
-fi
-
-python3 - "$notes_dir" "$usage_top" "$usage_json" <<'PY'
-"""
-notes audit — raw wikilink-graph telemetry.
-
-Reports inbound/outbound link counts per note and broken targets
-(wikilinks pointing at notes that don't exist on disk). Deliberately
-generic: no `status:` frontmatter awareness, no "pattern" concept, no
-promotion/demotion logic. Those layered analyses live one level up
-(today: in fold's pattern-audit task — see fold/notes/notes-graph-and-commit-discipline.md).
-
-External wikilinks (e.g. [[KnickKnackLabs/repo#42]], [[fold]]) are
-excluded from broken-target detection because they reference things
-outside this notes directory.
-
-Output:
-  Default (human-readable):
-    - Top-N notes by inbound link count
-    - Top-N notes by outbound link count
-    - Broken targets (sorted)
-
-  --json:
-    {
-      "notes": {
-        "<stem>": {
-          "inbound": <int>,
-          "outbound": <int>,
-          "broken_targets": ["<missing-target>", ...]
-        },
-        ...
-      }
-    }
-"""
-
-import json
-import re
+import os
 import sys
-from collections import defaultdict
 from pathlib import Path
 
-notes_dir = Path(sys.argv[1])
-# Reject invalid --top values before rendering; empty rows would be misleading.
-try:
-    top_n = int(sys.argv[2])
-except ValueError:
-    print(f"Error: --top must be an integer (got {sys.argv[2]!r})", file=sys.stderr)
-    sys.exit(2)
-if top_n < 1:
-    print(f"Error: --top must be >= 1 (got {top_n})", file=sys.stderr)
-    sys.exit(2)
-as_json = sys.argv[3] == "true"
+repo_dir = Path(os.environ["MISE_CONFIG_ROOT"])
+target_dir = Path(os.environ.get("NOTES_CALLER_PWD", "."))
+notes_dir = target_dir / os.environ.get("usage_dir", "notes")
 
-# Wikilinks anywhere in body text. [[target]] or [[target|display]].
-# Targets and aliases stay on a single line (filenames can't contain
-# newlines), so we exclude \n from both capture groups to prevent a
-# stray "[[" earlier in the file from being paired with "]]" much later.
-link_re = re.compile(r"\[\[([^\]|\n]+)(?:\|[^\]\n]*)?\]\]")
-# Strip fenced code blocks and inline code before scanning so we don't
-# count link-shaped literals in code examples.
-fence_re = re.compile(r"```.*?```", re.S)
-inline_code_re = re.compile(r"`[^`]*`")
-# Strip a leading YAML frontmatter block so wiki-shaped strings inside
-# frontmatter values (e.g. a `description:` field) don't pollute counts.
-# Tolerate an optional UTF-8 BOM so files saved by Windows tooling don't
-# silently leak their frontmatter wikilinks into the body scan.
-frontmatter_re = re.compile(r"\A\ufeff?---\n.*?\n---\n", re.S)
+sys.path.insert(0, str(repo_dir / "lib"))
+from audit import audit_directory, parse_top, render_human, render_json  # noqa: E402
 
 
-def is_external(target: str) -> bool:
-    # Treat slash-bearing targets as external; callers can layer extra policy on --json.
-    return "/" in target
+def main() -> int:
+    if not notes_dir.is_dir():
+        print(f"Error: notes directory not found: {notes_dir}", file=sys.stderr)
+        return 1
+
+    try:
+        top_n = parse_top(os.environ.get("usage_top", "10"))
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    result = audit_directory(notes_dir)
+    if os.environ.get("usage_json", "false") == "true":
+        print(render_json(result))
+    else:
+        print(render_human(result, top_n))
+    return 0
 
 
-def link_target_stem(target: str) -> str:
-    """Normalize a wikilink target to a note stem.
-
-    Strips section anchors (#heading), trims whitespace, returns the
-    bare stem the way notes are stored on disk.
-    """
-    return target.split("#", 1)[0].strip()
-
-
-notes = sorted(notes_dir.glob("*.md"))
-stems = {p.stem for p in notes}
-
-inbound: dict[str, int] = defaultdict(int)
-outbound: dict[str, int] = defaultdict(int)
-# Per-source set of broken target stems. We use a set so a note that
-# references the same missing target three times shows up as one broken
-# link, not three identical lines in the report. The aggregate
-# multiplicity is still visible via the source note's `outbound` count.
-broken: dict[str, set[str]] = defaultdict(set)
-
-for path in notes:
-    stem = path.stem
-    text = path.read_text(encoding="utf-8", errors="replace")
-    # Strip frontmatter and code blocks so wiki-shaped literals there
-    # don't count as outbound links.
-    body = frontmatter_re.sub("", text, count=1)
-    stripped = inline_code_re.sub("", fence_re.sub("", body))
-
-    for raw_target in link_re.findall(stripped):
-        target = link_target_stem(raw_target)
-        if not target:
-            continue
-        if is_external(target):
-            continue
-        outbound[stem] += 1
-        if target in stems:
-            inbound[target] += 1
-        else:
-            broken[stem].add(target)
-
-# Ensure every note has a row in the count maps even if it's a
-# zero-link island; makes the JSON output complete and avoids
-# surprising omissions in the top-N rendering.
-for s in stems:
-    inbound.setdefault(s, 0)
-    outbound.setdefault(s, 0)
-
-
-if as_json:
-    payload = {
-        "notes": {
-            stem: {
-                "inbound": inbound[stem],
-                "outbound": outbound[stem],
-                "broken_targets": sorted(broken.get(stem, [])),
-            }
-            for stem in sorted(stems)
-        }
-    }
-    print(json.dumps(payload, indent=2, sort_keys=True))
-    sys.exit(0)
-
-
-def fmt_top(counts: dict[str, int], n: int) -> list[tuple[str, int]]:
-    """Sort by count desc, then stem asc for stable output. Trim zeros
-    out of the top list so a sparse corpus doesn't render a page of
-    zero-link entries."""
-    nonzero = [(s, c) for s, c in counts.items() if c > 0]
-    nonzero.sort(key=lambda sc: (-sc[1], sc[0]))
-    return nonzero[:n]
-
-
-def render_top(label: str, counts: dict[str, int]) -> None:
-    rows = fmt_top(counts, top_n)
-    if not rows:
-        print(f"{label}: (no notes have any links yet)")
-        print()
-        return
-    print(f"{label}:")
-    stem_width = max(len(s) for s, _ in rows)
-    # Column widths derived from the rows we're about to print so the
-    # `outbound:` label doesn't drift when one row has a 4-digit count
-    # and the others have 2-digit counts.
-    in_width = max(len(str(inbound[s])) for s, _ in rows)
-    out_width = max(len(str(outbound[s])) for s, _ in rows)
-    for stem, _ in rows:
-        print(
-            f"  {stem.ljust(stem_width)}  "
-            f"inbound: {inbound[stem]:>{in_width}}  "
-            f"outbound: {outbound[stem]:>{out_width}}"
-        )
-    print()
-
-
-print(f"Scanned {len(notes)} note(s) under {notes_dir}.")
-print()
-render_top(f"Top {top_n} by inbound links", inbound)
-render_top(f"Top {top_n} by outbound links", outbound)
-
-broken_pairs = sorted(
-    (src, tgt) for src, tgts in broken.items() for tgt in tgts
-)
-if broken_pairs:
-    print(f"Broken wikilink targets ({len(broken_pairs)}):")
-    src_width = max(len(src) for src, _ in broken_pairs)
-    for src, tgt in broken_pairs:
-        print(f"  {src.ljust(src_width)}  → [[{tgt}]]")
-else:
-    print("Broken wikilink targets: none")
-PY
+if __name__ == "__main__":
+    raise SystemExit(main())
