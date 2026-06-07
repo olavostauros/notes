@@ -307,3 +307,105 @@ setup_encrypted_repo_with_obfuscation() {
   [ ! -f "$TARGET_DIR/notes/plain.md" ]
   [ -f "$TARGET_DIR/notes/$id" ]
 }
+
+# --- encryption pre-commit hook (#49) ---
+# The hook is invoked by git with cwd = repo root; replicate that.
+run_encryption_hook() {
+  run bash -c "cd '$TARGET_DIR' && bash .git/hooks/pre-commit.d/encryption"
+}
+
+@test "encryption hook passes when no encrypted-pattern file is staged (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  # A file outside any encrypted pattern — the common commit that touches no notes.
+  echo "public" > "$TARGET_DIR/README.md"
+  git -C "$TARGET_DIR" add README.md
+
+  run_encryption_hook
+  [ "$status" -eq 0 ]
+}
+
+@test "encryption hook blocks plaintext staged under an encrypted path (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  # Inject a plaintext blob into the index for an encrypted path, bypassing the
+  # git-crypt clean filter — simulates staging while git-crypt is locked.
+  mkdir -p "$TARGET_DIR/notes"
+  printf 'PLAINTEXT-LEAK\n' > "$TARGET_DIR/notes/leak.md"
+  local blob
+  blob=$(printf 'PLAINTEXT-LEAK\n' | git -C "$TARGET_DIR" hash-object -w --stdin)
+  git -C "$TARGET_DIR" update-index --add --cacheinfo 100644 "$blob" notes/leak.md
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"should be encrypted but are plaintext"* ]]
+  [[ "$output" == *"notes/leak.md"* ]]
+}
+
+@test "encryption hook uses staged attributes when checking staged plaintext (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  # The commit snapshot can differ from the worktree. If the hook consults
+  # worktree attributes, it can miss a staged encryption rule and allow a
+  # plaintext blob into an encrypted path.
+  printf 'notes/** filter=git-crypt diff=git-crypt\n' > "$TARGET_DIR/.gitattributes"
+  git -C "$TARGET_DIR" add .gitattributes
+  printf '# worktree attributes intentionally differ from the index\n' > "$TARGET_DIR/.gitattributes"
+
+  mkdir -p "$TARGET_DIR/notes"
+  printf 'PLAINTEXT-LEAK\n' > "$TARGET_DIR/notes/leak.md"
+  local blob
+  blob=$(printf 'PLAINTEXT-LEAK\n' | git -C "$TARGET_DIR" hash-object -w --stdin)
+  git -C "$TARGET_DIR" update-index --add --cacheinfo 100644 "$blob" notes/leak.md
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"should be encrypted but are plaintext"* ]]
+  [[ "$output" == *"notes/leak.md"* ]]
+}
+
+@test "encryption hook blocks plaintext renamed into an encrypted path (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  printf 'PLAINTEXT-LEAK\n' > "$TARGET_DIR/public.md"
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q --no-verify -m "baseline public file"
+
+  # With rename detection enabled, git diff classifies this as R rather than A.
+  # The hook must still inspect the destination path before committing it under
+  # the encrypted pattern.
+  git -C "$TARGET_DIR" config diff.renames true
+  git -C "$TARGET_DIR" mv public.md notes/leak.md
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"should be encrypted but are plaintext"* ]]
+  [[ "$output" == *"notes/leak.md"* ]]
+}
+
+@test "encryption hook passes when an encrypted-path file is properly encrypted (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  # Staged while unlocked: the clean filter encrypts the blob, so the hook is happy.
+  mkdir -p "$TARGET_DIR/notes"
+  echo "secret" > "$TARGET_DIR/notes/ok.md"
+  git -C "$TARGET_DIR" add notes/ok.md
+
+  run_encryption_hook
+  [ "$status" -eq 0 ]
+}

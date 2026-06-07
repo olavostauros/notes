@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # Prevent accidentally committing plaintext files that should be encrypted.
+#
+# Inspects only staged files. Uses `git check-attr` (O(staged)) to find which
+# staged paths are under an encrypted git-crypt pattern, instead of enumerating
+# every encrypted file in the repo with `git-crypt status -e` (O(repo)) on every
+# commit. See KnickKnackLabs/notes#49.
 set -eo pipefail
 
 if ! command -v git-crypt &>/dev/null; then
@@ -7,17 +12,29 @@ if ! command -v git-crypt &>/dev/null; then
   exit 0
 fi
 
-bad_files=()
-encrypted_files=$(git-crypt status -e 2>/dev/null | awk '{print $2}' || true)
-[ -z "$encrypted_files" ] && exit 0
+# Staged adds/copies/modifies/renames, NUL-delimited for path safety.
+staged=()
+while IFS= read -r -d '' path; do staged+=("$path"); done \
+  < <(git diff --cached --name-only --diff-filter=ACMR -z)
+[ "${#staged[@]}" -eq 0 ] && exit 0
 
-while IFS= read -r file; do
-  if echo "$encrypted_files" | grep -qxF "$file"; then
-    if { git-crypt status "$file" 2>&1 || true; } | grep -qi "not encrypted"; then
-      bad_files+=("$file")
-    fi
+# Which staged paths are under an encrypted (filter=git-crypt) pattern?
+# check-attr -z emits NUL-delimited <path> <attr> <value> triples.
+encrypted_staged=()
+while IFS= read -r -d '' path \
+   && IFS= read -r -d '' _attr \
+   && IFS= read -r -d '' value; do
+  [ "$value" = "git-crypt" ] && encrypted_staged+=("$path")
+done < <(git check-attr --cached -z filter -- "${staged[@]}")
+[ "${#encrypted_staged[@]}" -eq 0 ] && exit 0
+
+# Flag any that are currently plaintext (e.g. git-crypt locked at stage time).
+bad_files=()
+for file in "${encrypted_staged[@]}"; do
+  if { git-crypt status -- "$file" 2>&1 || true; } | grep -qi "not encrypted"; then
+    bad_files+=("$file")
   fi
-done < <(git diff --cached --name-only --diff-filter=ACM)
+done
 
 if [ "${#bad_files[@]}" -gt 0 ]; then
   echo "ERROR: Staged files should be encrypted but are plaintext:" >&2
