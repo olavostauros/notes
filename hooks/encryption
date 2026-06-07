@@ -12,10 +12,10 @@ if ! command -v git-crypt &>/dev/null; then
   exit 0
 fi
 
-# Staged adds/copies/modifies, NUL-delimited for path safety.
+# Staged adds/copies/modifies/renames, NUL-delimited for path safety.
 staged=()
 while IFS= read -r -d '' path; do staged+=("$path"); done \
-  < <(git diff --cached --name-only --diff-filter=ACM -z)
+  < <(git diff --cached --name-only --diff-filter=ACMR -z)
 [ "${#staged[@]}" -eq 0 ] && exit 0
 
 # Which staged paths are under an encrypted (filter=git-crypt) pattern?
@@ -31,7 +31,7 @@ done < <(git check-attr --cached -z filter -- "${staged[@]}")
 # Flag any that are currently plaintext (e.g. git-crypt locked at stage time).
 bad_files=()
 for file in "${encrypted_staged[@]}"; do
-  if { git-crypt status "$file" 2>&1 || true; } | grep -qi "not encrypted"; then
+  if { git-crypt status -- "$file" 2>&1 || true; } | grep -qi "not encrypted"; then
     bad_files+=("$file")
   fi
 done

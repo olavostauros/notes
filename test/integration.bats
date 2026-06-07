@@ -349,6 +349,28 @@ run_encryption_hook() {
   [[ "$output" == *"notes/leak.md"* ]]
 }
 
+@test "encryption hook blocks plaintext renamed into an encrypted path (#49)" {
+  notes setup --yes
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  printf 'PLAINTEXT-LEAK\n' > "$TARGET_DIR/public.md"
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q --no-verify -m "baseline public file"
+
+  # With rename detection enabled, git diff classifies this as R rather than A.
+  # The hook must still inspect the destination path before committing it under
+  # the encrypted pattern.
+  git -C "$TARGET_DIR" config diff.renames true
+  git -C "$TARGET_DIR" mv public.md notes/leak.md
+
+  run_encryption_hook
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"should be encrypted but are plaintext"* ]]
+  [[ "$output" == *"notes/leak.md"* ]]
+}
+
 @test "encryption hook passes when an encrypted-path file is properly encrypted (#49)" {
   notes setup --yes
   local fpr
