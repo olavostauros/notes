@@ -62,6 +62,67 @@ load test_helper
   [[ "$output" == *"notes/aaaaaaaa"* ]]
 }
 
+# --- Orphans (text) ---
+
+@test "status shows Orphans section when orphan file exists" {
+  mkdir -p "$TARGET_DIR/notes"
+  touch "$TARGET_DIR/notes/graph.md"
+
+  run notes status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Orphans:"* ]]
+  [[ "$output" == *"graph.md"* ]]
+}
+
+@test "status shows no Orphans section when no orphan files" {
+  notes setup --yes
+
+  run notes status
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Orphans:"* ]]
+}
+
+@test "status shows multiple orphans when multiple orphan files exist" {
+  mkdir -p "$TARGET_DIR/notes"
+  touch "$TARGET_DIR/notes/graph.md"
+  touch "$TARGET_DIR/notes/index.md"
+
+  run notes status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Orphans:"* ]]
+  [[ "$output" == *"graph.md"* ]]
+  [[ "$output" == *"index.md"* ]]
+  [[ "$output" == *"2 file(s)"* ]]
+}
+
+# --- Orphans (JSON) ---
+
+@test "status --json has orphans field when orphan file exists" {
+  mkdir -p "$TARGET_DIR/notes"
+  touch "$TARGET_DIR/notes/graph.md"
+
+  run notes status -- --json
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.orphans.total == 1'
+  echo "$output" | jq -e '.orphans.files[0] == "graph.md"'
+}
+
+@test "status --json shows orphans.total 0 when no orphans" {
+  run notes status -- --json
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.orphans.total == 0'
+  echo "$output" | jq -e '.orphans.files == []'
+}
+
+@test "status --json shows unknown filename not classified as orphan" {
+  mkdir -p "$TARGET_DIR/notes"
+  touch "$TARGET_DIR/notes/random-file.md"
+
+  run notes status -- --json
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.orphans.total == 0'
+}
+
 # --- JSON output ---
 
 @test "status --json outputs valid JSON" {

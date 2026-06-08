@@ -95,6 +95,34 @@ fi
 
 changes_total=$((changes_modified + changes_new + changes_deleted + changes_stale))
 
+# --- Orphans (files from removed features) ---
+
+ORPHAN_PATTERNS=(
+  "graph.md"
+  "index.md"
+)
+
+orphan_files=()
+for pattern in "${ORPHAN_PATTERNS[@]}"; do
+  if [ -f "$TARGET_DIR/$NOTES_DIR/$pattern" ]; then
+    orphan_files+=("$pattern")
+  fi
+done
+
+orphan_count=${#orphan_files[@]}
+
+# Build JSON orphan files array
+orphan_files_json="[]"
+if [ "$orphan_count" -gt 0 ]; then
+  orphan_files_json="["
+  sep=""
+  for f in "${orphan_files[@]}"; do
+    orphan_files_json="${orphan_files_json}${sep}\"$f\""
+    sep=", "
+  done
+  orphan_files_json="${orphan_files_json}]"
+fi
+
 # --- Output ---
 
 if [ "$JSON" = "true" ]; then
@@ -103,12 +131,15 @@ if [ "$JSON" = "true" ]; then
       --arg enc "$enc_status" \
       --argjson enc_unlocked "$enc_unlocked" \
       --argjson unmerged_content_conflicts "$unmerged_content_conflict_count" \
+      --argjson orphan_count "$orphan_count" \
+      --argjson orphan_files "$orphan_files_json" \
       '{
         encryption: { status: $enc, unlocked: $enc_unlocked },
         obfuscation: { status: "unknown", notes: null },
         incomplete_deobfuscation: { conflicts: 0 },
         unmerged_content_conflicts: { conflicts: $unmerged_content_conflicts },
-        changes: null
+        changes: null,
+        orphans: { total: $orphan_count, files: $orphan_files }
       }'
   else
     jq -nc \
@@ -123,12 +154,15 @@ if [ "$JSON" = "true" ]; then
       --argjson chg_total "$changes_total" \
       --argjson incomplete_conflicts "$incomplete_conflicts" \
       --argjson unmerged_content_conflicts "$unmerged_content_conflict_count" \
+      --argjson orphan_count "$orphan_count" \
+      --argjson orphan_files "$orphan_files_json" \
       '{
         encryption: { status: $enc, unlocked: $enc_unlocked },
         obfuscation: { status: $obf, notes: $total_notes },
         incomplete_deobfuscation: { conflicts: $incomplete_conflicts },
         unmerged_content_conflicts: { conflicts: $unmerged_content_conflicts },
-        changes: { total: $chg_total, modified: $chg_modified, new: $chg_new, deleted: $chg_deleted, stale_readable: $chg_stale }
+        changes: { total: $chg_total, modified: $chg_modified, new: $chg_new, deleted: $chg_deleted, stale_readable: $chg_stale },
+        orphans: { total: $orphan_count, files: $orphan_files }
       }'
   fi
 else
@@ -159,6 +193,26 @@ else
         echo "Changes:     none"
       fi
     fi
+  fi
+
+  # --- Orphans output (text) ---
+  if [ "$orphan_count" -gt 0 ]; then
+    echo ""
+    echo "Orphans:     $orphan_count file(s) from removed features"
+    for f in "${orphan_files[@]}"; do
+      case "$f" in
+        graph.md)
+          echo "  $NOTES_DIR/$f   (from removed 'notes graph' — see #83)"
+          ;;
+        index.md)
+          echo "  $NOTES_DIR/$f   (from removed 'notes index' — see 6cd9758)"
+          ;;
+        *)
+          echo "  $NOTES_DIR/$f"
+          ;;
+      esac
+    done
+    echo "Clean with: notes clean --orphans"
   fi
 
   if [ "$unmerged_content_conflict_count" -gt 0 ]; then

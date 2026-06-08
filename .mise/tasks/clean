@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+#MISE description="Remove orphan files from removed features"
+#USAGE flag "--orphans" default=#false help="Remove orphan files left behind by removed features (graph.md, index.md)"
+#USAGE flag "--dir <dir>" default="notes" help="Notes directory name (default: notes)"
+set -euo pipefail
+
+source "$MISE_CONFIG_ROOT/lib/common.sh"
+require_git
+
+NOTES_DIR="${usage_dir:-notes}"
+ORPHANS="${usage_orphans:-false}"
+
+cd "$TARGET_DIR"
+
+ORPHAN_PATTERNS=(
+  "graph.md"
+  "index.md"
+)
+
+if [ "$ORPHANS" != "true" ]; then
+  echo "Usage: notes clean --orphans"
+  echo ""
+  echo "Remove orphan files from removed features."
+  echo "Currently recognized orphans: ${ORPHAN_PATTERNS[*]}"
+  exit 0
+fi
+
+found=0
+removed=0
+manifest="$NOTES_DIR/.manifest"
+
+for pattern in "${ORPHAN_PATTERNS[@]}"; do
+  target="$TARGET_DIR/$NOTES_DIR/$pattern"
+  if [ ! -f "$target" ]; then
+    continue
+  fi
+  ((found++)) || true
+
+  # Remove from manifest if present
+  if [ -f "$manifest" ] && manifest_id_for_name "$manifest" "$pattern" >/dev/null 2>&1; then
+    id_of_orphan=$(manifest_id_for_name "$manifest" "$pattern")
+    # Remove the hex blob file too
+    if [ -f "$TARGET_DIR/$NOTES_DIR/$id_of_orphan" ]; then
+      rm -f "$TARGET_DIR/$NOTES_DIR/$id_of_orphan"
+    fi
+    # Filter out the orphan's manifest entry
+    tmp=$(mktemp) || { echo "Error: failed to create temp file" >&2; exit 1; }
+    grep -v "^${id_of_orphan}"$'\t' "$manifest" > "$tmp" || [[ $? -eq 1 ]]
+    mv -f "$tmp" "$manifest"
+    rm -f "$target"
+    echo "  removed $NOTES_DIR/$pattern and manifest entry"
+  else
+    # Remove file only
+    if git -C "$TARGET_DIR" ls-files --error-unmatch "$NOTES_DIR/$pattern" &>/dev/null; then
+      git -C "$TARGET_DIR" rm --quiet "$NOTES_DIR/$pattern"
+      echo "  removed $NOTES_DIR/$pattern (tracked)"
+    else
+      rm -f "$target"
+      echo "  removed $NOTES_DIR/$pattern"
+    fi
+  fi
+  ((removed++)) || true
+done
+
+if [ "$found" -eq 0 ]; then
+  echo "No orphan files found."
+  exit 0
+fi
+
+echo ""
+echo "Removed $removed orphan file(s)."
