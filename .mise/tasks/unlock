@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Unlock encrypted files using your GPG key"
+#USAGE flag "-y --yes" default=#false help="Skip confirmation prompt"
 #USAGE flag "--force" default=#false help="Overwrite existing readable note files during deobfuscation"
 set -euo pipefail
 
@@ -23,6 +24,7 @@ fi
 # Deobfuscate filenames if a manifest exists
 if [ -f "$TARGET_DIR/notes/.manifest" ]; then
   if [ "${usage_force:-false}" = "true" ]; then
+    confirm_destructive "notes unlock --force will overwrite existing readable note files during deobfuscation. Continue?"
     cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate --force
   else
     cd "$MISE_CONFIG_ROOT" && NOTES_CALLER_PWD="$TARGET_DIR" mise run -q deobfuscate

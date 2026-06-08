@@ -130,6 +130,44 @@ generate_test_key() {
   [ -z "$(git -C "$TARGET_DIR" diff --cached --name-only)" ]
 }
 
+@test "unlock --force refuses without confirmation for dirty readable overwrite" {
+  notes setup --yes
+
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  # Create, obfuscate, commit, then deobfuscate — unlock without --force is clean
+  mkdir -p "$TARGET_DIR/notes"
+  echo "secret content" > "$TARGET_DIR/notes/secret.md"
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q --no-verify -m "Add encrypted note"
+
+  run without_confirmation "$TEST_DIR/missing-tty" notes unlock --force
+
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"confirmation required"* ]]
+  [[ "$output" == *"Re-run with --yes"* ]]
+}
+
+@test "unlock --force --yes proceeds with deobfuscation" {
+  notes setup --yes
+
+  local fpr
+  fpr=$(generate_test_key "$GNUPGHOME")
+  notes add-user -- --gpg-key "$fpr"
+
+  mkdir -p "$TARGET_DIR/notes"
+  echo "secret content" > "$TARGET_DIR/notes/secret.md"
+  git -C "$TARGET_DIR" add .
+  git -C "$TARGET_DIR" commit -q --no-verify -m "Add encrypted note"
+
+  run notes unlock --force --yes
+  [ "$status" -eq 0 ]
+  # Should have deobfuscated (file still readable after unlock)
+  grep -q "secret content" "$TARGET_DIR/notes/secret.md"
+}
+
 # --- status ---
 
 @test "status shows encryption info" {
